@@ -36,7 +36,7 @@ app.get('/orders', async (req, res) => {
     if (!rows || rows.length === 0) return res.json([]);
 
     const headers = rows[0].map(h => h.trim());
-    const data = rows.slice(1).map((row) =>
+    const data = rows.slice(1).map(row =>
       headers.reduce((obj, key, i) => {
         obj[key] = row[i] || '';
         return obj;
@@ -48,7 +48,11 @@ app.get('/orders', async (req, res) => {
     const type2Query = (req.query.type2 || '').toLowerCase().trim();
     const emailQuery = (req.query.email || '').toLowerCase().trim();
 
-    const typeTerms = typeQueryRaw.split('+').map(s => s.trim()).filter(Boolean);
+    // Поддержка split по + или , или запятиям с пробелами
+    const typeTerms = typeQueryRaw
+      .split(/[\+,]/)
+      .map(s => s.trim())
+      .filter(Boolean);
 
     const filtered = data.filter(row => {
       const type1 = (row.Type || '').toLowerCase();
@@ -93,7 +97,7 @@ app.get('/keywords', async (req, res) => {
     if (!rows || rows.length === 0) return res.json([]);
 
     const headers = rows[0].map(h => h.trim());
-    const data = rows.slice(1).map((row) =>
+    const data = rows.slice(1).map(row =>
       headers.reduce((obj, key, i) => {
         obj[key] = row[i] || '';
         return obj;
@@ -104,9 +108,10 @@ app.get('/keywords', async (req, res) => {
 
     data.forEach(row => {
       ['Type', 'Type2'].forEach(field => {
-        const val = (row[field] || '').split(',').map(s => s.trim());
-        val.forEach(word => {
-          if (word.length > 1) keywords.add(word);
+        const raw = row[field] || '';
+        const terms = raw.split(/[\+,]/).map(s => s.trim()).filter(Boolean);
+        terms.forEach(term => {
+          if (term.length > 1) keywords.add(term);
         });
       });
     });
@@ -117,6 +122,7 @@ app.get('/keywords', async (req, res) => {
     res.json([]);
   }
 });
+
 app.post('/addOrder', async (req, res) => {
   try {
     const { name, email, name1, partner, specialists } = req.body;
@@ -129,7 +135,7 @@ app.post('/addOrder', async (req, res) => {
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
 
-    const sheetName = 'LeadsCollty_Responses'; // ← Имя второго листа в этой же таблице
+    const sheetName = 'LeadsCollty_Responses';
 
     const now = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' });
     const row = [now, name, email, partner, name1];
