@@ -52,7 +52,7 @@ app.get('/orders', async (req, res) => {
       return type1.includes(typeQuery) || type2.includes(typeQuery);
     });
 
-    res.json(filtered);
+    res.json(filtered.map(row => ({ properties: row })));
   } catch (error) {
     console.error('❌ Error in /orders:', error);
     res.status(500).send('Error retrieving orders');
