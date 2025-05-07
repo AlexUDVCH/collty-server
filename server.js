@@ -44,9 +44,11 @@ app.get('/orders', async (req, res) => {
     );
 
     const confirmed = req.query.confirmed === 'true';
-    const typeQuery = (req.query.type || '').toLowerCase().trim();
+    const typeQueryRaw = (req.query.type || '').toLowerCase().trim();
     const type2Query = (req.query.type2 || '').toLowerCase().trim();
     const emailQuery = (req.query.email || '').toLowerCase().trim();
+
+    const typeTerms = typeQueryRaw.split('+').map(s => s.trim()).filter(Boolean);
 
     const filtered = data.filter(row => {
       const type1 = (row.Type || '').toLowerCase();
@@ -54,8 +56,10 @@ app.get('/orders', async (req, res) => {
       const email = (row.partner || '').toLowerCase();
       const status = (row.Textarea || '').toLowerCase();
 
-      const matchesType =
-        typeQuery ? type1.includes(typeQuery) || type2.includes(typeQuery) : true;
+      const matchesType = typeTerms.length
+        ? typeTerms.every(term => type1.includes(term) || type2.includes(term))
+        : true;
+
       const matchesType2 = type2Query ? type2.includes(type2Query) : true;
       const matchesEmail = emailQuery ? email.includes(emailQuery) : true;
       const matchesConfirmed = confirmed ? status.includes('confirmed') : true;
@@ -66,11 +70,10 @@ app.get('/orders', async (req, res) => {
     res.json(filtered);
   } catch (error) {
     console.error('❌ Error in /orders:', error);
-    res.status(200).json([]); // важно: всегда массив, даже при ошибке
+    res.status(200).json([]);
   }
 });
 
-// Слова из Type и Type2
 app.get('/keywords', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -111,7 +114,7 @@ app.get('/keywords', async (req, res) => {
     res.json(Array.from(keywords));
   } catch (err) {
     console.error('❌ Error in /keywords:', err);
-    res.json([]); // тоже возвращаем [] при ошибке
+    res.json([]);
   }
 });
 
