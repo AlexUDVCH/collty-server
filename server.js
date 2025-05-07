@@ -117,6 +117,44 @@ app.get('/keywords', async (req, res) => {
     res.json([]);
   }
 });
+app.post('/addOrder', async (req, res) => {
+  try {
+    const { name, email, name1, partner, specialists } = req.body;
+
+    const auth = new google.auth.GoogleAuth({
+      keyFile: path,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+
+    const sheetName = 'LeadsCollty_Responses'; // ← Имя второго листа в этой же таблице
+
+    const now = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' });
+    const row = [now, name, email, partner, name1];
+
+    for (let i = 0; i < 10; i++) {
+      const item = specialists[i] || {};
+      row.push(item.sp || '', item.hours || '', item.rate || '', item.cost || '');
+    }
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values: [row],
+      },
+    });
+
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('❌ Error in /addOrder:', err);
+    res.status(500).json({ error: 'Failed to append data' });
+  }
+});
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
