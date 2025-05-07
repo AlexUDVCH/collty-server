@@ -1,51 +1,42 @@
 const express = require('express');
 const { google } = require('googleapis');
-const fs = require('fs');
 const app = express();
 const port = process.env.PORT || 3000;
 
+const SHEET_ID = '1GIl15j9L1-KPyn2evruz3F0sscNo308mAC7huXm0WkY'; // ← Твой ID таблицы
+const SHEET_NAME = 'DataBaseCollty_Teams'; // ← Имя листа в таблице
+
 app.use(express.json());
-
-async function accessSheet() {
-  const auth = new google.auth.GoogleAuth({
-    keyFile: 'credentials.json',
-    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-  });
-
-  const client = await auth.getClient();
-  const sheets = google.sheets({ version: 'v4', auth: client });
-
-  const spreadsheetId = '1GIl15j9L1-KPyn2evruz3F0sscNo308mAC7huXm0WkY'; // твой ID таблицы
-  const range = 'DataBaseCollty_Teams!A1:Z1000'; // диапазон данных
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range,
-  });
-
-  return response.data.values;
-}
 
 app.get('/', (req, res) => {
   res.send('✅ Server is running and connected to Google Sheets!');
 });
 
-app.get('/orders', async (req, res) => {
+app.get('/data', async (req, res) => {
   try {
-    const data = await accessSheet();
-
-    const [headers, ...rows] = data;
-    const json = rows.map(row => {
-      const obj = {};
-      headers.forEach((header, i) => {
-        obj[header] = row[i] || '';
-      });
-      return obj;
+    const auth = new google.auth.GoogleAuth({
+      keyFile: '/etc/secrets/credentials.json', // ← путь к файлу-секрету
+      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
     });
 
-    res.json(json);
+    const sheets = google.sheets({ version: 'v4', auth: await auth.getClient() });
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: SHEET_NAME,
+    });
+
+    const [header, ...rows] = response.data.values;
+    const data = rows.map(row =>
+      header.reduce((acc, key, i) => {
+        acc[key] = row[i] || '';
+        return acc;
+      }, {})
+    );
+
+    res.json(data);
   } catch (error) {
-    console.error('❌ Error fetching data:', error);
+    console.error('❌ Error:', error);
     res.status(500).send('Error retrieving data from Google Sheets');
   }
 });
