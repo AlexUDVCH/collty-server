@@ -1,46 +1,68 @@
 const express = require('express');
 const { google } = require('googleapis');
+const cors = require('cors');
+require('dotenv').config();
+
 const app = express();
 const port = process.env.PORT || 3000;
 
-const SHEET_ID = '1GIl15j9L1-KPyn2evruz3F0sscNo308mAC7huXm0WkY'; // ← Твой ID таблицы
-const SHEET_NAME = 'DataBaseCollty_Teams'; // ← Имя листа в таблице
+const path = '/etc/secrets/credentials.json'; // путь к JSON с ключом (Render Secret File)
+const spreadsheetId = '1GIl15j9L1-KPyn2evruz3F0sscNo308mAC7huXm0WkY';
+const sheetName = 'DataBaseCollty_Teams';
 
+app.use(cors());
 app.use(express.json());
 
+// Проверка, что сервер жив
 app.get('/', (req, res) => {
-  res.send('✅ Server is running and connected to Google Sheets!');
+  res.send('✅ Server is working');
 });
 
-app.get('/data', async (req, res) => {
+// Основной роут /orders
+app.get('/orders', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
-      keyFile: '/etc/secrets/credentials.json', // ← путь к файлу-секрету
+      keyFile: path,
       scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
     });
 
-    const sheets = google.sheets({ version: 'v4', auth: await auth.getClient() });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
 
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: SHEET_NAME,
+      spreadsheetId,
+      range: `${sheetName}!A1:Z1000`,
     });
 
-    const [header, ...rows] = response.data.values;
-    const data = rows.map(row =>
-      header.reduce((acc, key, i) => {
-        acc[key] = row[i] || '';
-        return acc;
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return res.status(404).send('❌ No data found');
+
+    const headers = rows[0];
+    const data = rows.slice(1).map((row) =>
+      headers.reduce((obj, key, i) => {
+        obj[key] = row[i] || '';
+        return obj;
       }, {})
     );
 
-    res.json(data);
+    const typeQuery = (req.query.type || '').toLowerCase().trim();
+
+    const filtered = data.filter((row) => {
+      if (!typeQuery) return true; // без запроса — возвращаем всё
+
+      const type1 = (row.Type || '').toLowerCase();
+      const type2 = (row.Type2 || '').toLowerCase();
+
+      return type1.includes(typeQuery) || type2.includes(typeQuery);
+    });
+
+    res.json(filtered);
   } catch (error) {
-    console.error('❌ Error:', error);
-    res.status(500).send('Error retrieving data from Google Sheets');
+    console.error('❌ Error in /orders:', error);
+    res.status(500).send('Error retrieving orders');
   }
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Server listening on port ${port}`);
+  console.log(`🚀 Server running on port ${port}`);
 });
