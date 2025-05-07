@@ -6,19 +6,17 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-const path = '/etc/secrets/credentials.json'; // путь к JSON с ключом (Render Secret File)
+const path = '/etc/secrets/credentials.json'; // путь к Render-секрету
 const spreadsheetId = '1GIl15j9L1-KPyn2evruz3F0sscNo308mAC7huXm0WkY';
 const sheetName = 'DataBaseCollty_Teams';
 
 app.use(cors());
 app.use(express.json());
 
-// Проверка, что сервер жив
 app.get('/', (req, res) => {
   res.send('✅ Server is working');
 });
 
-// Основной роут /orders
 app.get('/orders', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -31,13 +29,13 @@ app.get('/orders', async (req, res) => {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A1:Z1000`,
+      range: `${sheetName}!A1:ZZ1000`,
     });
 
     const rows = response.data.values;
     if (!rows || rows.length === 0) return res.status(404).send('❌ No data found');
 
-    const headers = rows[0];
+    const headers = rows[0].map(h => h.trim()); // удаляем лишние пробелы
     const data = rows.slice(1).map((row) =>
       headers.reduce((obj, key, i) => {
         obj[key] = row[i] || '';
@@ -48,11 +46,9 @@ app.get('/orders', async (req, res) => {
     const typeQuery = (req.query.type || '').toLowerCase().trim();
 
     const filtered = data.filter((row) => {
-      if (!typeQuery) return true; // без запроса — возвращаем всё
-
-      const type1 = (row.Type || '').toLowerCase();
-      const type2 = (row.Type2 || '').toLowerCase();
-
+      if (!typeQuery) return true;
+      const type1 = (row.type || '').toLowerCase();
+      const type2 = (row.type2 || '').toLowerCase();
       return type1.includes(typeQuery) || type2.includes(typeQuery);
     });
 
