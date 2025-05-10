@@ -48,9 +48,8 @@ app.get('/orders', async (req, res) => {
     const type2Query = (req.query.type2 || '').toLowerCase().trim();
     const emailQuery = (req.query.email || '').toLowerCase().trim();
 
-    // Поддержка split по + или , или запятиям с пробелами
     const typeTerms = typeQueryRaw
-      .split(/[\+,]/)
+      .split(/[+,]/)
       .map(s => s.trim())
       .filter(Boolean);
 
@@ -94,7 +93,7 @@ app.get('/keywords', async (req, res) => {
     });
 
     const rows = response.data.values;
-    if (!rows || rows.length === 0) return res.json([]);
+    if (!rows || rows.length === 0) return res.json({ type: [], type2: [] });
 
     const headers = rows[0].map(h => h.trim());
     const data = rows.slice(1).map(row =>
@@ -104,22 +103,32 @@ app.get('/keywords', async (req, res) => {
       }, {})
     );
 
-    const keywords = new Set();
+    const typeSet = new Set();
+    const type2Set = new Set();
 
     data.forEach(row => {
-      ['Type', 'Type2'].forEach(field => {
-        const raw = row[field] || '';
-        const terms = raw.split(/[\+,]/).map(s => s.trim()).filter(Boolean);
-        terms.forEach(term => {
-          if (term.length > 1) keywords.add(term);
-        });
+      const typeRaw = row['Type'] || '';
+      const type2Raw = row['Type2'] || '';
+
+      const typeTerms = typeRaw.split(/[+,]/).map(s => s.trim()).filter(Boolean);
+      const type2Terms = type2Raw.split(/[+,]/).map(s => s.trim()).filter(Boolean);
+
+      typeTerms.forEach(term => {
+        if (term.length > 1) typeSet.add(term);
+      });
+
+      type2Terms.forEach(term => {
+        if (term.length > 1) type2Set.add(term);
       });
     });
 
-    res.json(Array.from(keywords));
+    res.json({
+      type: Array.from(typeSet),
+      type2: Array.from(type2Set),
+    });
   } catch (err) {
     console.error('❌ Error in /keywords:', err);
-    res.json([]);
+    res.json({ type: [], type2: [] });
   }
 });
 
