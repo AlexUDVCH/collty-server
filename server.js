@@ -8,7 +8,6 @@ const port = process.env.PORT || 3000;
 
 const path = '/etc/secrets/credentials.json';
 const spreadsheetId = '1GIl15j9L1-KPyn2evruz3F0sscNo308mAC7huXm0WkY';
-const sheetName = 'DataBaseCollty_Teams';
 
 app.use(cors());
 app.use(express.json());
@@ -17,6 +16,7 @@ app.get('/', (req, res) => {
   res.send('✅ Server is working');
 });
 
+// ========== ORDERS ==========
 app.get('/orders', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -29,7 +29,7 @@ app.get('/orders', async (req, res) => {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A1:ZZ1000`,
+      range: 'DataBaseCollty_Teams!A1:ZZ1000',
     });
 
     const rows = response.data.values;
@@ -43,41 +43,20 @@ app.get('/orders', async (req, res) => {
       }, {})
     );
 
-    const confirmed = req.query.confirmed === 'true';
-    const typeQueryRaw = (req.query.type || '').toLowerCase().trim();
-    const type2Query = (req.query.type2 || '').toLowerCase().trim();
     const emailQuery = (req.query.email || '').toLowerCase().trim();
-
-    const typeTerms = typeQueryRaw
-      .split(/[+,]/)
-      .map(s => s.trim())
-      .filter(Boolean);
-
-    const filtered = data.filter(row => {
-      const type1 = (row.Type || '').toLowerCase();
-      const type2 = (row.Type2 || '').toLowerCase();
-      const email = (row.partner || '').toLowerCase();
-      const status = (row.Textarea || '').toLowerCase();
-
-      const matchesType = typeTerms.length
-        ? typeTerms.every(term => type1.includes(term) || type2.includes(term))
-        : true;
-
-      const matchesType2 = type2Query ? type2.includes(type2Query) : true;
-      const matchesEmail = emailQuery ? email.includes(emailQuery) : true;
-      const matchesConfirmed = confirmed ? status.includes('confirmed') : true;
-
-      return matchesType && matchesType2 && matchesEmail && matchesConfirmed;
-    });
+    const filtered = emailQuery
+      ? data.filter(row => (row.partner || '').toLowerCase().includes(emailQuery))
+      : data;
 
     res.json(filtered);
   } catch (error) {
     console.error('❌ Error in /orders:', error);
-    res.status(200).json([]);
+    res.status(500).json({ error: 'Error reading orders data' });
   }
 });
 
-app.get('/keywords', async (req, res) => {
+// ========== LEADS ==========
+app.get('/leads', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
       keyFile: path,
@@ -89,11 +68,11 @@ app.get('/keywords', async (req, res) => {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A1:ZZ1000`,
+      range: 'LeadsCollty_Responses!A1:ZZ1000',
     });
 
     const rows = response.data.values;
-    if (!rows || rows.length === 0) return res.json({ type: [], type2: [] });
+    if (!rows || rows.length === 0) return res.json([]);
 
     const headers = rows[0].map(h => h.trim());
     const data = rows.slice(1).map(row =>
@@ -103,71 +82,15 @@ app.get('/keywords', async (req, res) => {
       }, {})
     );
 
-    const typeSet = new Set();
-    const type2Set = new Set();
+    const emailQuery = (req.query.email || '').toLowerCase().trim();
+    const filtered = emailQuery
+      ? data.filter(row => (row.email || '').toLowerCase().includes(emailQuery))
+      : data;
 
-    data.forEach(row => {
-      const typeRaw = row['Type'] || '';
-      const type2Raw = row['Type2'] || '';
-
-      const typeTerms = typeRaw.split(/[+,]/).map(s => s.trim()).filter(Boolean);
-      const type2Terms = type2Raw.split(/[+,]/).map(s => s.trim()).filter(Boolean);
-
-      typeTerms.forEach(term => {
-        if (term.length > 1) typeSet.add(term);
-      });
-
-      type2Terms.forEach(term => {
-        if (term.length > 1) type2Set.add(term);
-      });
-    });
-
-    res.json({
-      type: Array.from(typeSet),
-      type2: Array.from(type2Set),
-    });
-  } catch (err) {
-    console.error('❌ Error in /keywords:', err);
-    res.json({ type: [], type2: [] });
-  }
-});
-
-app.post('/addOrder', async (req, res) => {
-  try {
-    const { name, email, name1, partner, specialists } = req.body;
-
-    const auth = new google.auth.GoogleAuth({
-      keyFile: path,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
-
-    const sheetName = 'LeadsCollty_Responses';
-
-    const now = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' });
-    const row = [now, name, email, partner, name1];
-
-    for (let i = 0; i < 10; i++) {
-      const item = specialists[i] || {};
-      row.push(item.sp || '', item.hours || '', item.rate || '', item.cost || '');
-    }
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range: `${sheetName}!A1`,
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: {
-        values: [row],
-      },
-    });
-
-    res.status(200).json({ success: true });
-  } catch (err) {
-    console.error('❌ Error in /addOrder:', err);
-    res.status(500).json({ error: 'Failed to append data' });
+    res.json(filtered);
+  } catch (error) {
+    console.error('❌ Error in /leads:', error);
+    res.status(500).json({ error: 'Error reading leads data' });
   }
 });
 
