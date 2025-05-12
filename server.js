@@ -167,7 +167,9 @@ app.post('/addOrder', async (req, res) => {
       Status1 = '', Status2 = '', Textarea = '', Type = '', Type2 = '',
       X1Q = '', industrymarket_expertise = '', anticipated_project_start_date = '',
       Partner_confirmation = '', Brief = '', Chat = '', Documents = '', nda = '',
-      Link = '', totalsumm = '', month = ''
+      Link = '', totalsumm = '', month = '',
+      spcv1 = '', spcv2 = '', spcv3 = '', spcv4 = '', spcv5 = '',
+      spcv6 = '', spcv7 = '', spcv8 = '', spcv9 = '', spcv10 = ''
     } = req.body;
 
     const auth = new google.auth.GoogleAuth({
@@ -180,12 +182,12 @@ app.post('/addOrder', async (req, res) => {
     const now = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' });
 
     const flat = [];
-    const spcvs = [];
     for (let i = 0; i < 10; i++) {
       const s = specialists[i] || {};
       flat.push(s.sp || '', s.hours || '', s.rate || s.quantity || '', s.cost || '');
-      spcvs.push(s.description || '');
     }
+
+    const spcvs = [spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10];
 
     const row = [
       now, name, email, partner, teamName,
