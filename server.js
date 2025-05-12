@@ -1,4 +1,4 @@
-// server.js (обновлённая версия для Google Sheets API с поддержкой /keywords и исправленным /orders)
+// server.js — Полностью обновлённый код с полной записью всех полей
 
 const express = require('express');
 const { google } = require('googleapis');
@@ -8,7 +8,7 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-const path = '/etc/secrets/credentials.json'; // путь к JSON-ключу
+const path = '/etc/secrets/credentials.json';
 const spreadsheetId = '1GIl15j9L1-KPyn2evruz3F0sscNo308mAC7huXm0WkY';
 const sheetOrders = 'DataBaseCollty_Teams';
 const sheetLeads = 'LeadsCollty_Responses';
@@ -16,11 +16,12 @@ const sheetLeads = 'LeadsCollty_Responses';
 app.use(cors());
 app.use(express.json());
 
+// Для проверки
 app.get('/', (req, res) => {
-  res.send('✅ Server is working');
+  res.send('Server is running');
 });
 
-// === /orders — получает команды из основной таблицы ===
+// === /orders ===
 app.get('/orders', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -72,39 +73,12 @@ app.get('/orders', async (req, res) => {
 
     res.json(filtered);
   } catch (error) {
-    console.error('❌ Error in /orders:', error);
+    console.error('Error in /orders:', error);
     res.status(200).json([]);
   }
 });
 
-// === /leads — получает заявки из второй таблицы ===
-app.get('/leads', async (req, res) => {
-  try {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: path,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-    });
-
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${sheetLeads}!A2:Z1000`,
-    });
-
-    const leads = response.data.values || [];
-    const emailQuery = (req.query.email || '').toLowerCase();
-    const filteredLeads = leads.filter(row => (row[2] || '').toLowerCase().includes(emailQuery));
-
-    res.json(filteredLeads);
-  } catch (error) {
-    console.error('❌ Error in /leads:', error);
-    res.status(500).json({ error: 'Failed to load leads' });
-  }
-});
-
-// === /keywords — получает ключевые слова из Type и Type2 ===
+// === /keywords ===
 app.get('/keywords', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -144,15 +118,37 @@ app.get('/keywords', async (req, res) => {
       type2: Array.from(type2),
     });
   } catch (err) {
-    console.error('❌ Error in /keywords:', err);
+    console.error('Error in /keywords:', err);
     res.status(500).json({ error: 'Failed to load keywords' });
   }
 });
 
-// === /addOrder — запись новых заявок в Google Sheet ===
+// === /addOrder ===
 app.post('/addOrder', async (req, res) => {
   try {
-    const { name, email, partner, teamName, specialists } = req.body;
+    const {
+      name,
+      email,
+      partner,
+      teamName,
+      specialists = [],
+      Status1 = '',
+      Status2 = '',
+      Textarea = '',
+      Type = '',
+      Type2 = '',
+      X1Q = '',
+      industrymarket_expertise = '',
+      anticipated_project_start_date = '',
+      Partner_confirmation = '',
+      Brief = '',
+      Chat = '',
+      Documents = '',
+      nda = '',
+      Link = '',
+      totalsumm = '',
+      month = ''
+    } = req.body;
 
     const auth = new google.auth.GoogleAuth({
       keyFile: path,
@@ -163,12 +159,26 @@ app.post('/addOrder', async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth: client });
 
     const now = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' });
-    const row = [now, name, email, partner, teamName];
 
+    // sp/hours/quantity/summ, spcv по 10 шт
+    const flat = [];
     for (let i = 0; i < 10; i++) {
-      const item = specialists[i] || {};
-      row.push(item.sp || '', item.hours || '', item.quantity || item.rate || '', item.cost || '');
+      const s = specialists[i] || {};
+      flat.push(s.sp || '', s.hours || '', s.quantity || s.rate || '', s.cost || '');
     }
+
+    const spcvs = specialists.map(s => s.description || '');
+    while (spcvs.length < 10) spcvs.push('');
+
+    const row = [
+      now, name, email, partner, teamName,
+      Status1, Status2, '', anticipated_project_start_date, '',
+      Textarea, '', partner, Partner_confirmation, '',
+      totalsumm, month, X1Q, '', industrymarket_expertise,
+      ...flat,
+      Brief, Chat, Documents, nda, Link, Type, Type2,
+      ...spcvs
+    ];
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
@@ -182,11 +192,11 @@ app.post('/addOrder', async (req, res) => {
 
     res.status(200).json({ success: true });
   } catch (err) {
-    console.error('❌ Error in /addOrder:', err);
+    console.error('Error in /addOrder:', err);
     res.status(500).json({ error: 'Failed to append data' });
   }
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Server running on port ${port}`);
+  console.log(`Server running on port ${port}`);
 });
