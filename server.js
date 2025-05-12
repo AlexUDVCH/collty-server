@@ -1,3 +1,4 @@
+// === FULL server.js for Collty (Google Sheets version) ===
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
@@ -18,14 +19,13 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
-// === /orders ===
+// === GET /orders ===
 app.get('/orders', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
       keyFile: path,
       scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
     });
-
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
 
@@ -38,12 +38,10 @@ app.get('/orders', async (req, res) => {
     if (!rows || rows.length === 0) return res.json([]);
 
     const headers = rows[0].map(h => h.trim());
-    const data = rows.slice(1).map(row =>
-      headers.reduce((obj, key, i) => {
-        obj[key] = row[i] || '';
-        return obj;
-      }, {})
-    );
+    const data = rows.slice(1).map(row => headers.reduce((obj, key, i) => {
+      obj[key] = row[i] || '';
+      return obj;
+    }, {}));
 
     const emailQuery = (req.query.email || '').toLowerCase().trim();
     const typeQuery = (req.query.type || '').toLowerCase().trim();
@@ -56,33 +54,32 @@ app.get('/orders', async (req, res) => {
       const type2 = (row.Type2 || '').toLowerCase();
       const textarea = (row.Textarea || '').toLowerCase();
 
-      const matchesEmail = emailQuery && email.includes(emailQuery);
-      const matchesType = typeQuery && type.includes(typeQuery);
-      const matchesType2 = type2Query && type2.includes(type2Query);
-      const matchesConfirmed = confirmed ? textarea.includes('confirmed') : true;
+      const matchEmail = emailQuery && email.includes(emailQuery);
+      const matchType = typeQuery && type.includes(typeQuery);
+      const matchType2 = type2Query && type2.includes(type2Query);
+      const matchConfirmed = confirmed ? textarea.includes('confirmed') : true;
 
       return (
-        (emailQuery && matchesEmail && matchesConfirmed) ||
-        (typeQuery && matchesType && matchesConfirmed) ||
-        (type2Query && matchesType2 && matchesConfirmed)
+        (emailQuery && matchEmail && matchConfirmed) ||
+        (typeQuery && matchType && matchConfirmed) ||
+        (type2Query && matchType2 && matchConfirmed)
       );
     });
 
     res.json(filtered);
-  } catch (error) {
-    console.error('Error in /orders:', error);
+  } catch (err) {
+    console.error('Error in /orders:', err);
     res.status(200).json([]);
   }
 });
 
-// === /leads ===
+// === GET /leads ===
 app.get('/leads', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
       keyFile: path,
       scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
     });
-
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
 
@@ -95,12 +92,10 @@ app.get('/leads', async (req, res) => {
     if (!rows || rows.length === 0) return res.json([]);
 
     const headers = rows[0].map(h => h.trim());
-    const data = rows.slice(1).map(row =>
-      headers.reduce((obj, key, i) => {
-        obj[key] = row[i] || '';
-        return obj;
-      }, {})
-    );
+    const data = rows.slice(1).map(row => headers.reduce((obj, key, i) => {
+      obj[key] = row[i] || '';
+      return obj;
+    }, {}));
 
     const emailQuery = (req.query.email || '').toLowerCase().trim();
     const confirmed = req.query.confirmed === 'true';
@@ -108,26 +103,25 @@ app.get('/leads', async (req, res) => {
     const filtered = data.filter(row => {
       const email = (row.Email || row.email || '').toLowerCase();
       const textarea = (row.Textarea || '').toLowerCase();
-      const matchesEmail = emailQuery && email.includes(emailQuery);
-      const matchesConfirmed = confirmed ? textarea.includes('confirmed') : true;
-      return matchesEmail && matchesConfirmed;
+      const matchEmail = emailQuery && email.includes(emailQuery);
+      const matchConfirmed = confirmed ? textarea.includes('confirmed') : true;
+      return matchEmail && matchConfirmed;
     });
 
     res.json(filtered);
-  } catch (error) {
-    console.error('Error in /leads:', error);
+  } catch (err) {
+    console.error('Error in /leads:', err);
     res.status(200).json([]);
   }
 });
 
-// === /keywords ===
+// === GET /keywords ===
 app.get('/keywords', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
       keyFile: path,
       scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
     });
-
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
 
@@ -165,64 +159,41 @@ app.get('/keywords', async (req, res) => {
   }
 });
 
-// === /addOrder ===
+// === POST /addOrder ===
 app.post('/addOrder', async (req, res) => {
   try {
     const {
-      name,
-      email,
-      partner,
-      teamName,
-      specialists = [],
-      Status1 = '',
-      Status2 = '',
-      Textarea = '',
-      Type = '',
-      Type2 = '',
-      X1Q = '',
-      XXX = '',
-      industrymarket_expertise = '',
-      anticipated_project_start_date = '',
-      Partner_confirmation = '',
-      Brief = '',
-      Chat = '',
-      Documents = '',
-      nda = '',
-      Link = '',
-      totalsumm = '',
-      month = '',
-      "Payment status": paymentStatus = '',
-      Name1 = ''
+      name, email, partner, teamName, specialists = [],
+      Status1 = '', Status2 = '', Textarea = '', Type = '', Type2 = '',
+      X1Q = '', industrymarket_expertise = '', anticipated_project_start_date = '',
+      Partner_confirmation = '', Brief = '', Chat = '', Documents = '', nda = '',
+      Link = '', totalsumm = '', month = ''
     } = req.body;
 
     const auth = new google.auth.GoogleAuth({
       keyFile: path,
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
-
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
 
     const now = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' });
 
     const flat = [];
+    const spcvs = [];
     for (let i = 0; i < 10; i++) {
       const s = specialists[i] || {};
-      flat.push(s.sp || '', s.hours || '', s.quantity || s.rate || '', s.cost || '');
+      flat.push(s.sp || '', s.hours || '', s.rate || s.quantity || '', s.cost || '');
+      spcvs.push(s.description || '');
     }
-
-    const spcvs = specialists.map(s => s.description || '');
-    while (spcvs.length < 10) spcvs.push('');
 
     const row = [
       now, name, email, partner, teamName,
-      Status1, Status2, paymentStatus, anticipated_project_start_date, '',
+      Status1, Status2, '', anticipated_project_start_date, '',
       Textarea, '', partner, Partner_confirmation, '',
-      totalsumm, month, X1Q, XXX, industrymarket_expertise,
-      ...flat,
-      Brief, Chat, Documents, nda, Link, Type, Type2,
-      ...spcvs,
-      Name1, '', '', '', '', '', '', '', '', ''
+      totalsumm, month, X1Q, '', industrymarket_expertise,
+      ...flat, Brief, Chat, Documents, nda, Link, Type, Type2,
+      ...spcvs
     ];
 
     await sheets.spreadsheets.values.append({
