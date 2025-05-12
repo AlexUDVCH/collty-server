@@ -1,4 +1,5 @@
-// server.js (обновлённая версия для Google Sheets API с поддержкой /keywords)
+// server.js (обновлённая версия для Google Sheets API с поддержкой /keywords и исправленным /orders)
+
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
@@ -7,7 +8,7 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-const path = '/etc/secrets/credentials.json';
+const path = '/etc/secrets/credentials.json'; // путь к JSON-ключу
 const spreadsheetId = '1GIl15j9L1-KPyn2evruz3F0sscNo308mAC7huXm0WkY';
 const sheetOrders = 'DataBaseCollty_Teams';
 const sheetLeads = 'LeadsCollty_Responses';
@@ -19,6 +20,7 @@ app.get('/', (req, res) => {
   res.send('✅ Server is working');
 });
 
+// === /orders — получает команды из основной таблицы ===
 app.get('/orders', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -31,7 +33,7 @@ app.get('/orders', async (req, res) => {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetLeads}!A1:ZZ1000`,
+      range: `${sheetOrders}!A1:ZZ1000`,
     });
 
     const rows = response.data.values;
@@ -46,7 +48,27 @@ app.get('/orders', async (req, res) => {
     );
 
     const emailQuery = (req.query.email || '').toLowerCase().trim();
-    const filtered = data.filter(row => (row.Email || '').toLowerCase().includes(emailQuery));
+    const typeQuery = (req.query.type || '').toLowerCase().trim();
+    const type2Query = (req.query.type2 || '').toLowerCase().trim();
+    const confirmed = req.query.confirmed === 'true';
+
+    const filtered = data.filter(row => {
+      const email = (row.Email || '').toLowerCase();
+      const type = (row.Type || '').toLowerCase();
+      const type2 = (row.Type2 || '').toLowerCase();
+      const textarea = (row.Textarea || '').toLowerCase();
+
+      const matchesEmail = emailQuery && email.includes(emailQuery);
+      const matchesType = typeQuery && type.includes(typeQuery);
+      const matchesType2 = type2Query && type2.includes(type2Query);
+      const matchesConfirmed = confirmed ? textarea.includes('confirmed') : true;
+
+      return (
+        (emailQuery && matchesEmail && matchesConfirmed) ||
+        (typeQuery && matchesType && matchesConfirmed) ||
+        (type2Query && matchesType2 && matchesConfirmed)
+      );
+    });
 
     res.json(filtered);
   } catch (error) {
@@ -55,6 +77,7 @@ app.get('/orders', async (req, res) => {
   }
 });
 
+// === /leads — получает заявки из второй таблицы ===
 app.get('/leads', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -81,6 +104,7 @@ app.get('/leads', async (req, res) => {
   }
 });
 
+// === /keywords — получает ключевые слова из Type и Type2 ===
 app.get('/keywords', async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -125,6 +149,7 @@ app.get('/keywords', async (req, res) => {
   }
 });
 
+// === /addOrder — запись новых заявок в Google Sheet ===
 app.post('/addOrder', async (req, res) => {
   try {
     const { name, email, partner, teamName, specialists } = req.body;
@@ -142,7 +167,7 @@ app.post('/addOrder', async (req, res) => {
 
     for (let i = 0; i < 10; i++) {
       const item = specialists[i] || {};
-      row.push(item.sp || '', item.hours || '', item.quantity || '', item.cost || '');
+      row.push(item.sp || '', item.hours || '', item.quantity || item.rate || '', item.cost || '');
     }
 
     await sheets.spreadsheets.values.append({
