@@ -1,4 +1,4 @@
-// === FULL server.js for Collty (Google Sheets version) ===
+// === FULL server.js for Collty (Google Sheets version, leads only) ===
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
@@ -9,7 +9,6 @@ const port = process.env.PORT || 3000;
 
 const path = '/etc/secrets/credentials.json';
 const spreadsheetId = '1GIl15j9L1-KPyn2evruz3F0sscNo308mAC7huXm0WkY';
-const sheetOrders = 'DataBaseCollty_Teams';
 const sheetLeads = 'LeadsCollty_Responses';
 
 app.use(cors());
@@ -17,60 +16,6 @@ app.use(express.json());
 
 app.get('/', (req, res) => {
   res.send('Server is running');
-});
-
-// === GET /orders ===
-app.get('/orders', async (req, res) => {
-  try {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: path,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-    });
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${sheetOrders}!A1:ZZ1000`,
-    });
-
-    const rows = response.data.values;
-    if (!rows || rows.length === 0) return res.json([]);
-
-    const headers = rows[0].map(h => h.trim());
-    const data = rows.slice(1).map(row => headers.reduce((obj, key, i) => {
-      obj[key] = row[i] || '';
-      return obj;
-    }, {}));
-
-    const emailQuery = (req.query.email || '').toLowerCase().trim();
-    const typeQuery = (req.query.type || '').toLowerCase().trim();
-    const type2Query = (req.query.type2 || '').toLowerCase().trim();
-    const confirmed = req.query.confirmed === 'true';
-
-    const filtered = data.filter(row => {
-      const email = (row.Email || '').toLowerCase();
-      const type = (row.Type || '').toLowerCase();
-      const type2 = (row.Type2 || '').toLowerCase();
-      const textarea = (row.Textarea || '').toLowerCase();
-
-      const matchEmail = emailQuery && email.includes(emailQuery);
-      const matchType = typeQuery && type.includes(typeQuery);
-      const matchType2 = type2Query && type2.includes(type2Query);
-      const matchConfirmed = confirmed ? textarea.includes('confirmed') : true;
-
-      return (
-        (emailQuery && matchEmail && matchConfirmed) ||
-        (typeQuery && matchType && matchConfirmed) ||
-        (type2Query && matchType2 && matchConfirmed)
-      );
-    });
-
-    res.json(filtered);
-  } catch (err) {
-    console.error('Error in /orders:', err);
-    res.status(200).json([]);
-  }
 });
 
 // === GET /leads ===
@@ -127,7 +72,7 @@ app.get('/keywords', async (req, res) => {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetOrders}!A1:ZZ1000`,
+      range: `${sheetLeads}!A1:ZZ1000`,
     });
 
     const rows = response.data.values;
