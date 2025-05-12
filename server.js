@@ -31,7 +31,7 @@ app.get('/orders', async (req, res) => {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetOrders}!A1:ZZ1000`,
+      range: `${sheetLeads}!A1:ZZ1000`,
     });
 
     const rows = response.data.values;
@@ -45,32 +45,8 @@ app.get('/orders', async (req, res) => {
       }, {})
     );
 
-    const confirmed = req.query.confirmed === 'true';
-    const typeQueryRaw = (req.query.type || '').toLowerCase().trim();
-    const type2Query = (req.query.type2 || '').toLowerCase().trim();
     const emailQuery = (req.query.email || '').toLowerCase().trim();
-
-    const typeTerms = typeQueryRaw
-      .split(/[+,]/)
-      .map(s => s.trim())
-      .filter(Boolean);
-
-    const filtered = data.filter(row => {
-      const type1 = (row.Type || '').toLowerCase();
-      const type2 = (row.Type2 || '').toLowerCase();
-      const email = (row.partner || '').toLowerCase();
-      const status = (row.Textarea || '').toLowerCase();
-
-      const matchesType = typeTerms.length
-        ? typeTerms.every(term => type1.includes(term) || type2.includes(term))
-        : true;
-
-      const matchesType2 = type2Query ? type2.includes(type2Query) : true;
-      const matchesEmail = emailQuery ? email.includes(emailQuery) : true;
-      const matchesConfirmed = confirmed ? status.includes('confirmed') : true;
-
-      return matchesType && matchesType2 && matchesEmail && matchesConfirmed;
-    });
+    const filtered = data.filter(row => (row.Email || '').toLowerCase().includes(emailQuery));
 
     res.json(filtered);
   } catch (error) {
@@ -95,9 +71,8 @@ app.get('/leads', async (req, res) => {
     });
 
     const leads = response.data.values || [];
-
     const emailQuery = (req.query.email || '').toLowerCase();
-    const filteredLeads = leads.filter(row => (row[3] || '').toLowerCase().includes(emailQuery));
+    const filteredLeads = leads.filter(row => (row[2] || '').toLowerCase().includes(emailQuery));
 
     res.json(filteredLeads);
   } catch (error) {
@@ -152,7 +127,7 @@ app.get('/keywords', async (req, res) => {
 
 app.post('/addOrder', async (req, res) => {
   try {
-    const { name, email, partner, specialists } = req.body;
+    const { name, email, partner, teamName, specialists } = req.body;
 
     const auth = new google.auth.GoogleAuth({
       keyFile: path,
@@ -163,7 +138,7 @@ app.post('/addOrder', async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth: client });
 
     const now = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' });
-    const row = [now, name, email, partner, name];
+    const row = [now, name, email, partner, teamName];
 
     for (let i = 0; i < 10; i++) {
       const item = specialists[i] || {};
