@@ -180,6 +180,7 @@ app.post('/addOrder', async (req, res) => {
       Type = '',
       Type2 = '',
       X1Q = '',
+      XXX = '',
       industrymarket_expertise = '',
       anticipated_project_start_date = '',
       Partner_confirmation = '',
@@ -189,7 +190,9 @@ app.post('/addOrder', async (req, res) => {
       nda = '',
       Link = '',
       totalsumm = '',
-      month = ''
+      month = '',
+      "Payment status": paymentStatus = '',
+      Name1 = ''
     } = req.body;
 
     const auth = new google.auth.GoogleAuth({
@@ -213,12 +216,13 @@ app.post('/addOrder', async (req, res) => {
 
     const row = [
       now, name, email, partner, teamName,
-      Status1, Status2, '', anticipated_project_start_date, '',
+      Status1, Status2, paymentStatus, anticipated_project_start_date, '',
       Textarea, '', partner, Partner_confirmation, '',
-      totalsumm, month, X1Q, '', industrymarket_expertise,
+      totalsumm, month, X1Q, XXX, industrymarket_expertise,
       ...flat,
       Brief, Chat, Documents, nda, Link, Type, Type2,
-      ...spcvs
+      ...spcvs,
+      Name1, '', '', '', '', '', '', '', '', ''
     ];
 
     await sheets.spreadsheets.values.append({
