@@ -189,10 +189,10 @@ app.post('/addOrder', async (req, res) => {
 
     const row = [
       now, name, email, partner, teamName,
-      Status1, Status2, '', anticipated_project_start_date, '',
-      Textarea, '', partner, Partner_confirmation, '',
-      totalsumm, month, X1Q, '', industrymarket_expertise,
-      ...flat, Brief, Chat, Documents, nda, Link, Type, Type2,
+      Status1, Status2, '', Textarea, '',
+      Partner_confirmation, totalsumm, month, X1Q, '',
+      anticipated_project_start_date, industrymarket_expertise, Type, Type2,
+      ...flat, Brief, Chat, Documents, nda, Link,
       ...spcvs
     ];
 
