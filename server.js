@@ -1,4 +1,4 @@
-// server.js (обновлённая версия для Google Sheets API)
+// server.js (обновлённая версия для Google Sheets API с поддержкой /keywords)
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
@@ -91,12 +91,11 @@ app.get('/leads', async (req, res) => {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetLeads}!A2:Z1000`, // предполагаем, что первая строка — заголовки
+      range: `${sheetLeads}!A2:Z1000`,
     });
 
     const leads = response.data.values || [];
 
-    // фильтрация по email
     const emailQuery = (req.query.email || '').toLowerCase();
     const filteredLeads = leads.filter(row => (row[3] || '').toLowerCase().includes(emailQuery));
 
@@ -104,6 +103,50 @@ app.get('/leads', async (req, res) => {
   } catch (error) {
     console.error('❌ Error in /leads:', error);
     res.status(500).json({ error: 'Failed to load leads' });
+  }
+});
+
+app.get('/keywords', async (req, res) => {
+  try {
+    const auth = new google.auth.GoogleAuth({
+      keyFile: path,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+    });
+
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetOrders}!A1:ZZ1000`,
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return res.json({ type: [], type2: [] });
+
+    const headers = rows[0];
+    const typeIndex = headers.findIndex(h => h.trim().toLowerCase() === 'type');
+    const type2Index = headers.findIndex(h => h.trim().toLowerCase() === 'type2');
+
+    const type = new Set();
+    const type2 = new Set();
+
+    rows.slice(1).forEach(row => {
+      if (typeIndex >= 0 && row[typeIndex]) {
+        row[typeIndex].split(',').map(s => s.trim()).forEach(s => type.add(s));
+      }
+      if (type2Index >= 0 && row[type2Index]) {
+        row[type2Index].split(',').map(s => s.trim()).forEach(s => type2.add(s));
+      }
+    });
+
+    res.json({
+      type: Array.from(type),
+      type2: Array.from(type2),
+    });
+  } catch (err) {
+    console.error('❌ Error in /keywords:', err);
+    res.status(500).json({ error: 'Failed to load keywords' });
   }
 });
 
