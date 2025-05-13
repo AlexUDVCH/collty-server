@@ -1,4 +1,4 @@
-// === FULL server.js for Collty with PATCH /confirm using timestamp ===
+// === server.js (Final version with PATCH /confirm using timestamp) ===
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
@@ -18,17 +18,6 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.send('✅ Server is running');
 });
-
-// === Utility: Convert column index to letter ===
-function columnToLetter(column) {
-  let temp = '', letter = '';
-  while (column >= 0) {
-    temp = (column % 26);
-    letter = String.fromCharCode(temp + 65) + letter;
-    column = Math.floor(column / 26) - 1;
-  }
-  return letter;
-}
 
 // === GET /orders ===
 app.get('/orders', async (req, res) => {
@@ -209,13 +198,20 @@ app.post('/addOrder', async (req, res) => {
   }
 });
 
+// === UTILITY: Convert column index to A1 letter ===
+function columnToLetter(col) {
+  let letter = '';
+  while (col >= 0) {
+    letter = String.fromCharCode((col % 26) + 65) + letter;
+    col = Math.floor(col / 26) - 1;
+  }
+  return letter;
+}
+
 // === PATCH /confirm ===
 app.patch('/confirm', async (req, res) => {
   const { email, timestamp } = req.body;
-
-  if (!email || !timestamp) {
-    return res.status(400).json({ error: 'Missing email or timestamp' });
-  }
+  if (!email || !timestamp) return res.status(400).json({ error: 'Missing email or timestamp' });
 
   try {
     const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
@@ -235,28 +231,26 @@ app.patch('/confirm', async (req, res) => {
     const timeCol = headers.findIndex(h => h.trim().toLowerCase() === 'timestamp');
     const confirmCol = headers.findIndex(h => h.trim().toLowerCase() === 'confirmation');
 
-    if (emailCol < 0 || timeCol < 0 || confirmCol < 0) {
-      return res.status(400).json({ error: 'Required columns not found' });
-    }
+    if (emailCol < 0 || timeCol < 0 || confirmCol < 0) return res.status(400).json({ error: 'Required columns not found' });
 
-    const rowIndex = rows.findIndex((row, i) => {
+    const targetRowIndex = rows.findIndex((row, i) => {
       if (i === 0) return false;
-      return (row[emailCol] || '').toLowerCase().trim() === email.toLowerCase().trim() &&
-             (row[timeCol] || '').trim() === timestamp.trim();
+      return (row[emailCol] || '').toLowerCase().trim() === email.toLowerCase().trim()
+          && (row[timeCol] || '').trim() === timestamp.trim();
     });
 
-    if (rowIndex < 1) {
-      return res.status(404).json({ error: 'Matching row not found' });
-    }
+    if (targetRowIndex < 1) return res.status(404).json({ error: 'Matching row not found' });
 
-    const confirmColLetter = columnToLetter(confirmCol);
-    const range = `${sheetLeads}!${confirmColLetter}${rowIndex + 1}`;
+    const colLetter = columnToLetter(confirmCol);
+    const range = `${sheetLeads}!${colLetter}${targetRowIndex + 1}`;
 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range,
       valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [['Confirmed']] },
+      requestBody: {
+        values: [['Confirmed']],
+      },
     });
 
     res.status(200).json({ success: true });
