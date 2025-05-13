@@ -265,12 +265,20 @@ app.patch('/confirm', async (req, res) => {
   }
 });
 
-// === PATCH /updatePConfirmation (FINAL LOGIC ADDITION) ===
-app.patch('/updatePConfirmation', async (req, res) => {
-  const { email, timestamp, newValue } = req.body;
+function columnToLetter(col) {
+  let letter = '';
+  while (col >= 0) {
+    letter = String.fromCharCode((col % 26) + 65) + letter;
+    col = Math.floor(col / 26) - 1;
+  }
+  return letter;
+}
 
-  if (!email || !timestamp || !newValue) {
-    return res.status(400).json({ error: 'Missing email, timestamp, or newValue' });
+app.patch('/updatePConfirmation', async (req, res) => {
+  const { email, timestamp } = req.body;
+
+  if (!email || !timestamp) {
+    return res.status(400).json({ error: 'Missing email or timestamp' });
   }
 
   try {
@@ -313,7 +321,7 @@ app.patch('/updatePConfirmation', async (req, res) => {
       range,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
-        values: [[newValue]],
+        values: [['Request']],
       },
     });
 
@@ -323,6 +331,7 @@ app.patch('/updatePConfirmation', async (req, res) => {
     res.status(500).json({ error: 'Failed to update PConfirmation' });
   }
 });
+
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
