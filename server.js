@@ -259,19 +259,25 @@ app.patch('/confirm', async (req, res) => {
     res.status(500).json({ error: 'Failed to confirm' });
   }
 });
-// === PATCH /updatePConfirmation ===
-app.patch('/updatePConfirmation', async (req, res) => {
-  const { email, timestamp, newValue } = req.body;
 
-  if (!email || !timestamp || !newValue) {
-    return res.status(400).json({ error: 'Missing email, timestamp, or newValue' });
+function columnToLetter(col) {
+  let letter = '';
+  while (col >= 0) {
+    letter = String.fromCharCode((col % 26) + 65) + letter;
+    col = Math.floor(col / 26) - 1;
+  }
+  return letter;
+}
+
+app.patch('/updatePConfirmation', async (req, res) => {
+  const { email, timestamp } = req.body;
+
+  if (!email || !timestamp) {
+    return res.status(400).json({ error: 'Missing email or timestamp' });
   }
 
   try {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: path,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
 
@@ -286,32 +292,31 @@ app.patch('/updatePConfirmation', async (req, res) => {
     const headers = rows[0];
     const emailCol = headers.findIndex(h => h.trim().toLowerCase() === 'email');
     const timeCol = headers.findIndex(h => h.trim().toLowerCase() === 'timestamp');
-    const pconfirmCol = headers.findIndex(h => h.trim().toLowerCase() === 'pconfirmation');
+    const pConfirmCol = headers.findIndex(h => h.trim().toLowerCase() === 'pconfirmation');
 
-    if (emailCol < 0 || timeCol < 0 || pconfirmCol < 0) {
+    if (emailCol < 0 || timeCol < 0 || pConfirmCol < 0) {
       return res.status(400).json({ error: 'Required columns not found' });
     }
 
-    const rowIndex = rows.findIndex((row, i) => {
+    const targetRowIndex = rows.findIndex((row, i) => {
       if (i === 0) return false;
-      return (row[emailCol] || '').toLowerCase().trim() === email.toLowerCase().trim() &&
-             (row[timeCol] || '').trim() === timestamp.trim();
+      return (row[emailCol] || '').toLowerCase().trim() === email.toLowerCase().trim()
+          && (row[timeCol] || '').trim() === timestamp.trim();
     });
 
-    if (rowIndex < 1) {
+    if (targetRowIndex < 1) {
       return res.status(404).json({ error: 'Matching row not found' });
     }
 
-    // Convert to A1 range (e.g., "AD7")
-    const colLetter = String.fromCharCode(65 + pconfirmCol);
-    const range = `${sheetLeads}!${colLetter}${rowIndex + 1}`;
+    const colLetter = columnToLetter(pConfirmCol);
+    const range = `${sheetLeads}!${colLetter}${targetRowIndex + 1}`;
 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
-        values: [[newValue]],
+        values: [['Request']],
       },
     });
 
