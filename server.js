@@ -129,10 +129,8 @@ app.get('/keywords', async (req, res) => {
 
 // === PATCH /confirm ===
 app.patch('/confirm', async (req, res) => {
-  const { email, teamName } = req.body;
-  if (!email || !teamName) {
-    return res.status(400).json({ error: 'Missing email or teamName' });
-  }
+  const { email, timestamp } = req.body;
+  if (!email || !timestamp) return res.status(400).json({ error: 'Missing email or timestamp' });
 
   try {
     const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
@@ -144,19 +142,15 @@ app.patch('/confirm', async (req, res) => {
     if (!rows || rows.length === 0) return res.status(404).json({ error: 'No data found' });
 
     const headers = rows[0];
-    const emailCol = headers.findIndex(h => h.trim().toLowerCase() === 'email');
-    const teamCol = headers.findIndex(h => h.trim().toLowerCase() === 'teamname');
-    const confirmCol = headers.findIndex(h => h.trim().toLowerCase() === 'confirmation');
+    const timestampCol = headers.findIndex(h => h.trim().toLowerCase() === 'timestamp');
+    const confirmationCol = headers.findIndex(h => h.trim().toLowerCase() === 'confirmation');
 
-    const rowIndex = rows.findIndex((row, i) => {
-      if (i === 0) return false;
-      return (row[emailCol] || '').toLowerCase().trim() === email.toLowerCase().trim() &&
-             (row[teamCol] || '').toLowerCase().trim() === teamName.toLowerCase().trim();
-    });
+    const rowIndex = rows.findIndex((row, i) => i > 0 && row[timestampCol]?.trim() === timestamp.trim());
+    if (rowIndex < 1) return res.status(404).json({ error: 'Matching row not found' });
 
-    if (rowIndex < 1) return res.status(404).json({ error: 'Row not found' });
+    const colLetter = String.fromCharCode(65 + confirmationCol);
+    const targetRange = `${sheetLeads}!${colLetter}${rowIndex + 1}`;
 
-    const targetRange = `${sheetLeads}!${String.fromCharCode(65 + confirmCol)}${rowIndex + 1}`;
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: targetRange,
@@ -171,58 +165,6 @@ app.patch('/confirm', async (req, res) => {
   }
 });
 
-// === POST /addOrder ===
-app.post('/addOrder', async (req, res) => {
-  try {
-    const {
-      name, email, partner, teamName, specialists = [],
-      Status1 = '', Status2 = '', Textarea = '', Type = '', Type2 = '',
-      X1Q = '', industrymarket_expertise = '', anticipated_project_start_date = '',
-      Partner_confirmation = '', Brief = '', Chat = '', Documents = '', nda = '',
-      Link = '', totalsumm = '', month = '',
-      Confirmation = '', PConfirmation = '',
-      spcv1 = '', spcv2 = '', spcv3 = '', spcv4 = '', spcv5 = '',
-      spcv6 = '', spcv7 = '', spcv8 = '', spcv9 = '', spcv10 = ''
-    } = req.body;
-
-    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
-
-    const now = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' });
-    const flat = [];
-    for (let i = 0; i < 10; i++) {
-      const s = specialists[i] || {};
-      flat.push(s.sp || '', s.hours || '', s.rate || s.quantity || '', s.cost || '');
-    }
-
-    const spcvs = [spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10];
-
-    const row = [
-      now, name, email, partner, teamName,
-      Status1, Status2, '', Textarea, '',
-      Partner_confirmation, totalsumm, month, X1Q, '',
-      anticipated_project_start_date, industrymarket_expertise, Type, Type2,
-      ...flat, Brief, Chat, Documents, nda, Link,
-      Confirmation, PConfirmation,
-      ...spcvs
-    ];
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range: `${sheetLeads}!A1`,
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [row] },
-    });
-
-    res.status(200).json({ success: true });
-  } catch (err) {
-    console.error('Error in /addOrder:', err);
-    res.status(500).json({ error: 'Failed to append data' });
-  }
-});
-
 app.listen(port, () => {
-  console.log('🚀 Server running on port', port);
+  console.log(`🚀 Server running on port ${port}`);
 });
