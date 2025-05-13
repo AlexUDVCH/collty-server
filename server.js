@@ -194,4 +194,64 @@ app.post('/addOrder', async (req, res) => {
 
 app.listen(port, () => {
   console.log(`\u{1F680} Server running on port ${port}`);
+// === PATCH /confirm ===
+app.patch('/confirm', async (req, res) => {
+  const { email, teamName } = req.body;
+
+  if (!email || !teamName) {
+    return res.status(400).json({ error: 'Missing email or teamName' });
+  }
+
+  try {
+    const auth = new google.auth.GoogleAuth({
+      keyFile: path,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetLeads}!A1:ZZ1000`,
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'No data found' });
+
+    const headers = rows[0];
+    const emailCol = headers.findIndex(h => h.trim().toLowerCase() === 'email');
+    const teamCol = headers.findIndex(h => h.trim().toLowerCase() === 'teamname');
+    const confirmCol = headers.findIndex(h => h.trim().toLowerCase() === 'confirmation');
+
+    if (emailCol < 0 || teamCol < 0 || confirmCol < 0) {
+      return res.status(400).json({ error: 'Required columns not found' });
+    }
+
+    // Найти строку
+    const targetRowIndex = rows.findIndex((row, i) => {
+      if (i === 0) return false;
+      return (row[emailCol] || '').toLowerCase().trim() === email.toLowerCase().trim()
+          && (row[teamCol] || '').toLowerCase().trim() === teamName.toLowerCase().trim();
+    });
+
+    if (targetRowIndex < 1) {
+      return res.status(404).json({ error: 'Matching row not found' });
+    }
+
+    const targetA1Range = `${sheetLeads}!${String.fromCharCode(65 + confirmCol)}${targetRowIndex + 1}`;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: targetA1Range,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [['Confirmed']],
+      },
+    });
+
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Error in /confirm:', err);
+    res.status(500).json({ error: 'Failed to confirm' });
+  }
 });
