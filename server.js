@@ -1,4 +1,4 @@
-// === FULL server.js for Collty (Google Sheets version with leads + orders + keywords + form) ===
+// === FULL server.js for Collty (Google Sheets version with leads + orders + keywords + form + confirmation) ===
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
@@ -22,10 +22,7 @@ app.get('/', (req, res) => {
 // === GET /orders ===
 app.get('/orders', async (req, res) => {
   try {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: path,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-    });
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
 
@@ -38,10 +35,7 @@ app.get('/orders', async (req, res) => {
     if (!rows || rows.length === 0) return res.json([]);
 
     const headers = rows[0].map(h => h.trim());
-    const data = rows.slice(1).map(row => headers.reduce((obj, key, i) => {
-      obj[key] = row[i] || '';
-      return obj;
-    }, {}));
+    const data = rows.slice(1).map(row => headers.reduce((obj, key, i) => { obj[key] = row[i] || ''; return obj; }, {}));
 
     const emailQuery = (req.query.email || '').toLowerCase().trim();
     const typeQuery = (req.query.type || '').toLowerCase().trim();
@@ -57,9 +51,7 @@ app.get('/orders', async (req, res) => {
       const textarea = (row.Textarea || '').toLowerCase();
 
       const matchEmail = emailQuery ? email.includes(emailQuery) : true;
-      const matchType = typeTerms.length
-        ? typeTerms.every(term => type.includes(term) || type2.includes(term))
-        : true;
+      const matchType = typeTerms.length ? typeTerms.every(term => type.includes(term) || type2.includes(term)) : true;
       const matchType2 = type2Query ? type2.includes(type2Query) : true;
       const matchConfirmed = confirmed ? textarea.includes('confirmed') : true;
 
@@ -76,10 +68,7 @@ app.get('/orders', async (req, res) => {
 // === GET /leads ===
 app.get('/leads', async (req, res) => {
   try {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: path,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-    });
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
 
@@ -92,10 +81,7 @@ app.get('/leads', async (req, res) => {
     if (!rows || rows.length === 0) return res.json([]);
 
     const headers = rows[0].map(h => h.trim());
-    const data = rows.slice(1).map(row => headers.reduce((obj, key, i) => {
-      obj[key] = row[i] || '';
-      return obj;
-    }, {}));
+    const data = rows.slice(1).map(row => headers.reduce((obj, key, i) => { obj[key] = row[i] || ''; return obj; }, {}));
 
     const emailQuery = (req.query.email || '').toLowerCase().trim();
     const confirmed = req.query.confirmed === 'true';
@@ -118,10 +104,7 @@ app.get('/leads', async (req, res) => {
 // === GET /keywords ===
 app.get('/keywords', async (req, res) => {
   try {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: path,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-    });
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
 
@@ -149,10 +132,7 @@ app.get('/keywords', async (req, res) => {
       }
     });
 
-    res.json({
-      type: Array.from(type),
-      type2: Array.from(type2),
-    });
+    res.json({ type: Array.from(type), type2: Array.from(type2) });
   } catch (err) {
     console.error('Error in /keywords:', err);
     res.status(500).json({ error: 'Failed to load keywords' });
@@ -168,14 +148,12 @@ app.post('/addOrder', async (req, res) => {
       X1Q = '', industrymarket_expertise = '', anticipated_project_start_date = '',
       Partner_confirmation = '', Brief = '', Chat = '', Documents = '', nda = '',
       Link = '', totalsumm = '', month = '',
+      Confirmation = '', PConfirmation = '',
       spcv1 = '', spcv2 = '', spcv3 = '', spcv4 = '', spcv5 = '',
       spcv6 = '', spcv7 = '', spcv8 = '', spcv9 = '', spcv10 = ''
     } = req.body;
 
-    const auth = new google.auth.GoogleAuth({
-      keyFile: path,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
 
@@ -195,6 +173,7 @@ app.post('/addOrder', async (req, res) => {
       Partner_confirmation, totalsumm, month, X1Q, '',
       anticipated_project_start_date, industrymarket_expertise, Type, Type2,
       ...flat, Brief, Chat, Documents, nda, Link,
+      Confirmation, PConfirmation,
       ...spcvs
     ];
 
@@ -214,5 +193,5 @@ app.post('/addOrder', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Server running on port ${port}`);
+  console.log(`\u{1F680} Server running on port ${port}`);
 });
