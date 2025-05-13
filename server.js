@@ -1,4 +1,4 @@
-// === server.js (Final version with PATCH /confirm using timestamp and dual email/partner support) ===
+// === server.js (Final version with PATCH /confirm + PATCH /pconfirm) ===
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
@@ -150,60 +150,7 @@ app.get('/keywords', async (req, res) => {
   }
 });
 
-// === POST /addOrder ===
-app.post('/addOrder', async (req, res) => {
-  try {
-    const {
-      name, email, partner, teamName, specialists = [],
-      Status1 = '', Status2 = '', Textarea = '', Type = '', Type2 = '',
-      X1Q = '', industrymarket_expertise = '', anticipated_project_start_date = '',
-      Partner_confirmation = '', Brief = '', Chat = '', Documents = '', nda = '',
-      Link = '', totalsumm = '', month = '',
-      Confirmation = '', PConfirmation = '',
-      spcv1 = '', spcv2 = '', spcv3 = '', spcv4 = '', spcv5 = '',
-      spcv6 = '', spcv7 = '', spcv8 = '', spcv9 = '', spcv10 = ''
-    } = req.body;
-
-    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
-
-    const now = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' });
-
-    const flat = [];
-    for (let i = 0; i < 10; i++) {
-      const s = specialists[i] || {};
-      flat.push(s.sp || '', s.hours || '', s.rate || s.quantity || '', s.cost || '');
-    }
-
-    const spcvs = [spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10];
-
-    const row = [
-      now, name, email, partner, teamName,
-      Status1, Status2, '', Textarea, '',
-      Partner_confirmation, totalsumm, month, X1Q, '',
-      anticipated_project_start_date, industrymarket_expertise, Type, Type2,
-      ...flat, Brief, Chat, Documents, nda, Link,
-      Confirmation, PConfirmation,
-      ...spcvs
-    ];
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range: `${sheetLeads}!A1`,
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [row] },
-    });
-
-    res.status(200).json({ success: true });
-  } catch (err) {
-    console.error('Error in /addOrder:', err);
-    res.status(500).json({ error: 'Failed to append data' });
-  }
-});
-
-// === UTILITY: Convert column index to A1 letter ===
+// === UTILITY ===
 function columnToLetter(col) {
   let letter = '';
   while (col >= 0) {
@@ -213,72 +160,17 @@ function columnToLetter(col) {
   return letter;
 }
 
-// === PATCH /confirm ===
-app.patch('/confirm', async (req, res) => {
-  const { email, timestamp } = req.body;
-  if (!email || !timestamp) return res.status(400).json({ error: 'Missing email or timestamp' });
+// === PATCH /pconfirm ===
+app.patch('/pconfirm', async (req, res) => {
+  const { email, timestamp, action } = req.body;
 
-  try {
-    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${sheetLeads}!A1:ZZ1000`,
-    });
-
-    const rows = response.data.values;
-    if (!rows || rows.length === 0) return res.status(404).json({ error: 'No data found' });
-
-    const headers = rows[0];
-    const emailCol = headers.findIndex(h => h.trim().toLowerCase() === 'email');
-    const timeCol = headers.findIndex(h => h.trim().toLowerCase() === 'timestamp');
-    const confirmCol = headers.findIndex(h => h.trim().toLowerCase() === 'confirmation');
-
-    if (emailCol < 0 || timeCol < 0 || confirmCol < 0) return res.status(400).json({ error: 'Required columns not found' });
-
-    const targetRowIndex = rows.findIndex((row, i) => {
-      if (i === 0) return false;
-      return (row[emailCol] || '').toLowerCase().trim() === email.toLowerCase().trim()
-          && (row[timeCol] || '').trim() === timestamp.trim();
-    });
-
-    if (targetRowIndex < 1) return res.status(404).json({ error: 'Matching row not found' });
-
-    const colLetter = columnToLetter(confirmCol);
-    const range = `${sheetLeads}!${colLetter}${targetRowIndex + 1}`;
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [['Confirmed']],
-      },
-    });
-
-    res.status(200).json({ success: true });
-  } catch (err) {
-    console.error('Error in /confirm:', err);
-    res.status(500).json({ error: 'Failed to confirm' });
+  if (!email || !timestamp || !action) {
+    return res.status(400).json({ error: 'Missing required fields' });
   }
-});
 
-function columnToLetter(col) {
-  let letter = '';
-  while (col >= 0) {
-    letter = String.fromCharCode((col % 26) + 65) + letter;
-    col = Math.floor(col / 26) - 1;
-  }
-  return letter;
-}
-
-app.patch('/updatePConfirmation', async (req, res) => {
-  const { email, timestamp } = req.body;
-
-  if (!email || !timestamp) {
-    return res.status(400).json({ error: 'Missing email or timestamp' });
+  const validActions = ['Confirmed', 'Unconfirmed', 'Finished'];
+  if (!validActions.includes(action)) {
+    return res.status(400).json({ error: 'Invalid action value' });
   }
 
   try {
@@ -321,17 +213,16 @@ app.patch('/updatePConfirmation', async (req, res) => {
       range,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
-        values: [['Request']],
+        values: [[action]],
       },
     });
 
     res.status(200).json({ success: true });
   } catch (err) {
-    console.error('Error in /updatePConfirmation:', err);
+    console.error('Error in /pconfirm:', err);
     res.status(500).json({ error: 'Failed to update PConfirmation' });
   }
 });
-
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
