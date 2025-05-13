@@ -1,3 +1,4 @@
+// === FULL server.js for Collty with PATCH /confirm using timestamp ===
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
@@ -17,6 +18,17 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.send('✅ Server is running');
 });
+
+// === Utility: Convert column index to letter ===
+function columnToLetter(column) {
+  let temp = '', letter = '';
+  while (column >= 0) {
+    temp = (column % 26);
+    letter = String.fromCharCode(temp + 65) + letter;
+    column = Math.floor(column / 26) - 1;
+  }
+  return letter;
+}
 
 // === GET /orders ===
 app.get('/orders', async (req, res) => {
@@ -227,26 +239,24 @@ app.patch('/confirm', async (req, res) => {
       return res.status(400).json({ error: 'Required columns not found' });
     }
 
-    const targetRowIndex = rows.findIndex((row, i) => {
+    const rowIndex = rows.findIndex((row, i) => {
       if (i === 0) return false;
-      return (row[emailCol] || '').toLowerCase().trim() === email.toLowerCase().trim()
-          && (row[timeCol] || '').trim() === timestamp.trim();
+      return (row[emailCol] || '').toLowerCase().trim() === email.toLowerCase().trim() &&
+             (row[timeCol] || '').trim() === timestamp.trim();
     });
 
-    if (targetRowIndex < 1) {
+    if (rowIndex < 1) {
       return res.status(404).json({ error: 'Matching row not found' });
     }
 
-    const colLetter = String.fromCharCode(65 + confirmCol);
-    const range = `${sheetLeads}!${colLetter}${targetRowIndex + 1}`;
+    const confirmColLetter = columnToLetter(confirmCol);
+    const range = `${sheetLeads}!${confirmColLetter}${rowIndex + 1}`;
 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range,
       valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [['Confirmed']],
-      },
+      requestBody: { values: [['Confirmed']] },
     });
 
     res.status(200).json({ success: true });
