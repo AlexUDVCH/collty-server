@@ -1,5 +1,4 @@
-
-// === server.js (Final version with PATCH /confirm using timestamp) ===
+// === server.js (Final version with PATCH /confirm using timestamp and dual email/partner support) ===
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
@@ -91,14 +90,19 @@ app.get('/leads', async (req, res) => {
     }, {}));
 
     const emailQuery = (req.query.email || '').toLowerCase().trim();
+    const partnerQuery = (req.query.partner || '').toLowerCase().trim();
     const confirmed = req.query.confirmed === 'true';
 
     const filtered = data.filter(row => {
       const email = (row.Email || row.email || '').toLowerCase();
+      const partner = (row.partner || '').toLowerCase();
       const textarea = (row.Textarea || '').toLowerCase();
+
       const matchEmail = emailQuery ? email.includes(emailQuery) : true;
+      const matchPartner = partnerQuery ? partner.includes(partnerQuery) : true;
       const matchConfirmed = confirmed ? textarea.includes('confirmed') : true;
-      return matchEmail && matchConfirmed;
+
+      return matchEmail && matchPartner && matchConfirmed;
     });
 
     res.json(filtered);
@@ -327,6 +331,7 @@ app.patch('/updatePConfirmation', async (req, res) => {
     res.status(500).json({ error: 'Failed to update PConfirmation' });
   }
 });
+
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
