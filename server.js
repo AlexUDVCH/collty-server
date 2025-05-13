@@ -275,7 +275,7 @@ function columnToLetter(col) {
 }
 
 app.patch('/updatePConfirmation', async (req, res) => {
-  const { email, timestamp } = req.body;
+  const { email, timestamp, newValue } = req.body;
 
   if (!email || !timestamp) {
     return res.status(400).json({ error: 'Missing email or timestamp' });
@@ -321,7 +321,7 @@ app.patch('/updatePConfirmation', async (req, res) => {
       range,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
-        values: [['Request']],
+        values: [[newValue]],
       },
     });
 
