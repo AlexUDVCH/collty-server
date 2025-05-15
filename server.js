@@ -179,14 +179,15 @@ app.post('/addOrder', async (req, res) => {
     const spcvs = [spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10];
 
     const row = [
-      now, name, email, partner, teamName,
-      Status1, Status2, '', Textarea, '',
-      Partner_confirmation, totalsumm, month, X1Q, '',
-      anticipated_project_start_date, industrymarket_expertise, Type, Type2,
-      ...flat, Brief, Chat, Documents, nda, Link,
-      Confirmation, PConfirmation,
-      ...spcvs
-    ];
+  now, name, email, partner, teamName,
+  Status1, Status2, Payment_status, 
+  Textarea, '', 
+  Partner_confirmation, totalsumm, month, X1Q, '',
+  anticipated_project_start_date, industrymarket_expertise, Type, Type2,
+  ...flat, Brief, Chat, Documents, nda, Link,
+  Confirmation, PConfirmation,
+  ...spcvs
+];
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
