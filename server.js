@@ -154,15 +154,15 @@ app.get('/keywords', async (req, res) => {
 app.post('/addOrder', async (req, res) => {
   try {
     const {
-      name, email, partner, teamName, specialists = [],
-      Status1 = '', Status2 = '', Textarea = '', Type = '', Type2 = '',
-      X1Q = '', industrymarket_expertise = '', anticipated_project_start_date = '',
-      Partner_confirmation = '', Brief = '', Chat = '', Documents = '', nda = '',
-      Link = '', totalsumm = '', month = '',
-      Confirmation = '', PConfirmation = '',
-      spcv1 = '', spcv2 = '', spcv3 = '', spcv4 = '', spcv5 = '',
-      spcv6 = '', spcv7 = '', spcv8 = '', spcv9 = '', spcv10 = ''
-    } = req.body;
+  name, email, partner, teamName, specialists = [],
+  Status1 = '', Status2 = '', Payment_status = '', Textarea = '', Type = '', Type2 = '',
+  X1Q = '', industrymarket_expertise = '', anticipated_project_start_date = '',
+  Partner_confirmation = '', Brief = '', Chat = '', Documents = '', nda = '',
+  Link = '', totalsumm = '', month = '',
+  Confirmation = '', PConfirmation = '',
+  spcv1 = '', spcv2 = '', spcv3 = '', spcv4 = '', spcv5 = '',
+  spcv6 = '', spcv7 = '', spcv8 = '', spcv9 = '', spcv10 = ''
+} = req.body;
 
     const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const client = await auth.getClient();
