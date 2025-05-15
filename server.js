@@ -153,9 +153,9 @@ app.get('/keywords', async (req, res) => {
 // === POST /addOrder ===
 app.post('/addOrder', async (req, res) => {
   try {
-    const {
+const {
   name, email, partner, teamName, specialists = [],
-  Status1 = '', Status2 = '', Payment_status = '', Textarea = '', Type = '', Type2 = '',
+  Status1 = '', Status2 = '', ['Payment status']: PaymentStatus = '', Textarea = '', Type = '', Type2 = '',
   X1Q = '', industrymarket_expertise = '', anticipated_project_start_date = '',
   Partner_confirmation = '', Brief = '', Chat = '', Documents = '', nda = '',
   Link = '', totalsumm = '', month = '',
@@ -180,7 +180,7 @@ app.post('/addOrder', async (req, res) => {
 
     const row = [
   now, name, email, partner, teamName,
-  Status1, Status2, Payment_status, 
+  Status1, Status2, PaymentStatus, 
   Textarea, '', 
   Partner_confirmation, totalsumm, month, X1Q, '',
   anticipated_project_start_date, industrymarket_expertise, Type, Type2,
