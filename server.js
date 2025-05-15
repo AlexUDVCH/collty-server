@@ -155,7 +155,7 @@ app.post('/addOrder', async (req, res) => {
   try {
     const {
       name, email, partner, teamName, specialists = [],
-      Status1 = '', Status2 = '', Payment_status: PaymentStatus = '', Textarea = '', Type = '', Type2 = '',
+      Status1 = '', Status2 = '', PaymentStatus = '', Textarea = '', Type = '', Type2 = '',
       X1Q = '', industrymarket_expertise = '', anticipated_project_start_date = '',
       Partner_confirmation = '', Brief = '', Chat = '', Documents = '', nda = '',
       Link = '', totalsumm = '', month = '',
