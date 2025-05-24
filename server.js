@@ -329,7 +329,7 @@ app.delete('/deleteOrder', async (req, res) => {
           {
             deleteDimension: {
               range: {
-                sheetId: 1, // Обычно LeadsCollty_Responses — это sheetId=1, если нет, подправь!
+                sheetId: 1182114241, // LeadsCollty_Responses sheetId
                 dimension: 'ROWS',
                 startIndex: targetRowIndex,
                 endIndex: targetRowIndex + 1,
