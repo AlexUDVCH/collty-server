@@ -68,6 +68,26 @@ app.get('/orders', async (req, res) => {
   }
 });
 
+// Helper function with retry for /leads
+async function fetchLeadsWithRetry(sheets, retries = 4, delayMs = 1500) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetLeads}!A1:ZZ1000`,
+      });
+      return response.data.values;
+    } catch (error) {
+      if (error.code === 503 && i < retries - 1) {
+        console.warn(`Retrying leads fetch (${i + 1}) after ${delayMs}ms...`);
+        await new Promise((res) => setTimeout(res, delayMs));
+      } else {
+        throw error;
+      }
+    }
+  }
+}
+
 // === GET /leads ===
 app.get('/leads', async (req, res) => {
   try {
@@ -75,12 +95,8 @@ app.get('/leads', async (req, res) => {
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
 
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${sheetLeads}!A1:ZZ1000`,
-    });
+    const rows = await fetchLeadsWithRetry(sheets);
 
-    const rows = response.data.values;
     if (!rows || rows.length === 0) return res.json([]);
 
     const headers = rows[0].map(h => h.trim());
