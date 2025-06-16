@@ -416,6 +416,64 @@ function columnToLetter(col) {
   }
   return letter;
 }
+// === PATCH /updateOrderHours ===
+app.patch('/updateOrderHours', async (req, res) => {
+  const { email, timestamp, ...fields } = req.body;
+  if (!email || !timestamp) return res.status(400).json({ error: 'Missing email or timestamp' });
+
+  try {
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+
+    // Получаем все строки
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetLeads}!A1:ZZ1000`,
+    });
+
+    const rows = response.data.values;
+    const headers = rows[0];
+    const emailCol = headers.findIndex(h => h.trim().toLowerCase() === 'email');
+    const timeCol = headers.findIndex(h => h.trim().toLowerCase() === 'timestamp');
+
+    // Найти строку по email+timestamp
+    const targetRowIndex = rows.findIndex((row, i) =>
+      i > 0 &&
+      (row[emailCol] || '').toLowerCase().trim() === email.toLowerCase().trim() &&
+      (row[timeCol] || '').trim() === timestamp.trim()
+    );
+
+    if (targetRowIndex < 1) return res.status(404).json({ error: 'Matching row not found' });
+
+    // Для каждого поля hours1..10, quantity1..10 — найти колонку и обновить
+    const updates = [];
+    Object.entries(fields).forEach(([key, value]) => {
+      const col = headers.findIndex(h => h.trim().toLowerCase() === key.toLowerCase());
+      if (col >= 0) {
+        updates.push({
+          range: `${sheetLeads}!${columnToLetter(col)}${targetRowIndex + 1}`,
+          value: value
+        });
+      }
+    });
+
+    // Одновременное обновление всех ячеек
+    await Promise.all(updates.map(u =>
+      sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: u.range,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[u.value]] },
+      })
+    ));
+
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Error in /updateOrderHours:', err);
+    res.status(500).json({ error: 'Failed to update hours' });
+  }
+});
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
