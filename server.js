@@ -474,6 +474,60 @@ app.patch('/updateOrderHours', async (req, res) => {
     res.status(500).json({ error: 'Failed to update hours' });
   }
 });
+// === PATCH /updateTeam ===
+app.patch('/updateTeam', async (req, res) => {
+  const { teamName, ...fields } = req.body;
+  if (!teamName) return res.status(400).json({ error: 'Missing teamName' });
+
+  try {
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+
+    // Читаем все строки
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetOrders}!A1:ZZ1000`,
+    });
+
+    const rows = response.data.values;
+    const headers = rows[0];
+    const teamNameCol = headers.findIndex(h => h.trim().toLowerCase() === 'teamname');
+
+    // Находим строку нужной команды
+    const targetRowIndex = rows.findIndex((row, i) =>
+      i > 0 &&
+      (row[teamNameCol] || '').trim() === teamName.trim()
+    );
+    if (targetRowIndex < 1) return res.status(404).json({ error: 'Team not found' });
+
+    // Обновляем только указанные поля
+    const updates = [];
+    Object.entries(fields).forEach(([key, value]) => {
+      const col = headers.findIndex(h => h.trim().toLowerCase() === key.toLowerCase());
+      if (col >= 0) {
+        updates.push({
+          range: `${sheetOrders}!${columnToLetter(col)}${targetRowIndex + 1}`,
+          value: value
+        });
+      }
+    });
+
+    await Promise.all(updates.map(u =>
+      sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: u.range,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[u.value]] },
+      })
+    ));
+
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Error in /updateTeam:', err);
+    res.status(500).json({ error: 'Failed to update team' });
+  }
+});
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
