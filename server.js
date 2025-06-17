@@ -528,6 +528,52 @@ app.patch('/updateTeam', async (req, res) => {
     res.status(500).json({ error: 'Failed to update team' });
   }
 });
+// === POST /addTeam ===
+app.post('/addTeam', async (req, res) => {
+  try {
+    const {
+      TeamName, partner, Status1, Type, Type2, anticipated_project_start_date,
+      X1Q, Partner_confirmation, "Payment status": PaymentStatus, Textarea, Brief, Chat, Link,
+      // специалисты
+      sp1, sp2, sp3, sp4, sp5, sp6, sp7, sp8, sp9, sp10,
+      quantity1, quantity2, quantity3, quantity4, quantity5, quantity6, quantity7, quantity8, quantity9, quantity10,
+      spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10
+    } = req.body;
+
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+
+    // Формируем новую строку в нужном порядке!
+    const row = [
+      TeamName, partner, Status1, Type, Type2, anticipated_project_start_date,
+      X1Q, Partner_confirmation, PaymentStatus, Textarea, Brief, Chat, Link,
+      sp1, quantity1, spcv1,
+      sp2, quantity2, spcv2,
+      sp3, quantity3, spcv3,
+      sp4, quantity4, spcv4,
+      sp5, quantity5, spcv5,
+      sp6, quantity6, spcv6,
+      sp7, quantity7, spcv7,
+      sp8, quantity8, spcv8,
+      sp9, quantity9, spcv9,
+      sp10, quantity10, spcv10
+    ];
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetOrders}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [row] },
+    });
+
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Error in /addTeam:', err);
+    res.status(500).json({ error: 'Failed to append team' });
+  }
+});
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
