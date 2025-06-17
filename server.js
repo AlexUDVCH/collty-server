@@ -531,6 +531,11 @@ app.patch('/updateTeam', async (req, res) => {
 // === POST /addTeam ===
 app.post('/addTeam', async (req, res) => {
   try {
+    // Инициализация Google Sheets API:
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+
     const {
       timestamp = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' }),
       Status1 = '', Status2 = '', PaymentStatus = '', anticipated_project_start_date = '',
@@ -572,10 +577,10 @@ app.post('/addTeam', async (req, res) => {
       spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10
     ];
 
-    // Пишем в таблицу начиная с B1 (строго по колонкам)
+    // Пишем в таблицу начиная с A1 (строго по колонкам)
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: 'DataBaseCollty_Teams!B1',
+      range: 'DataBaseCollty_Teams!A1',
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [row] },
