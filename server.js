@@ -532,52 +532,50 @@ app.patch('/updateTeam', async (req, res) => {
 app.post('/addTeam', async (req, res) => {
   try {
     const {
-      Status1, Status2, "Payment status": PaymentStatus, anticipated_project_start_date, TeamName,
-      Textarea, partner, Partner_confirmation, totalsumm, month, X1Q, industrymarket_expertise,
-      // специалисты
-      sp1, hours1, quantity1, summ1,
-      sp2, hours2, quantity2, summ2,
-      sp3, hours3, quantity3, summ3,
-      sp4, hours4, quantity4, summ4,
-      sp5, hours5, quantity5, summ5,
-      sp6, hours6, quantity6, summ6,
-      sp7, hours7, quantity7, summ7,
-      sp8, hours8, quantity8, summ8,
-      sp9, hours9, quantity9, summ9,
-      sp10, hours10, quantity10, summ10,
-      Brief, Chat, Documents, nda, Link, Type, Type2,
-      spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10
+      timestamp = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' }),
+      Status1 = '', Status2 = '', PaymentStatus = '', anticipated_project_start_date = '',
+      TeamName = '', Textarea = '', Created_time = '', partner = '', Partner_confirmation = '',
+      totalsumm = '', month = '', X1Q = '', XXX = '', industrymarket_expertise = '',
+      Brief = '', Chat = '', Documents = '', nda = '', Link = '', Type = '', Type2 = '',
+      spcv1 = '', spcv2 = '', spcv3 = '', spcv4 = '', spcv5 = '', spcv6 = '', spcv7 = '', spcv8 = '', spcv9 = '', spcv10 = ''
     } = req.body;
 
-    // Создать поле времени создания
-    const createdTime = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' });
+    // Specialists & hours
+    const getVal = (key) => req.body[key] || '';
+    const specialistFields = [];
+    for (let i = 1; i <= 10; i++) {
+      specialistFields.push(getVal(`sp${i}`), getVal(`hours${i}`), getVal(`quantity${i}`), getVal(`summ${i}`));
+    }
 
+    // === Если у тебя реально в таблице после Partner_confirmation идет пустая колонка, добавь '' сюда ===
+    // (см. скриншот: Partner_confirmation -- тут есть лишний столбец перед totalsumm)
+    // Если нет — убери.
     const row = [
-      Status1, Status2, PaymentStatus, anticipated_project_start_date, TeamName, Textarea, createdTime, partner, Partner_confirmation,
-      '', // пустая колонка если она у тебя есть после Partner_confirmation
-      totalsumm, month, X1Q, '', // XXX — если это лишняя пустая колонка
-      industrymarket_expertise,
-      sp1, hours1, quantity1, summ1,
-      sp2, hours2, quantity2, summ2,
-      sp3, hours3, quantity3, summ3,
-      sp4, hours4, quantity4, summ4,
-      sp5, hours5, quantity5, summ5,
-      sp6, hours6, quantity6, summ6,
-      sp7, hours7, quantity7, summ7,
-      sp8, hours8, quantity8, summ8,
-      sp9, hours9, quantity9, summ9,
-      sp10, hours10, quantity10, summ10,
+      timestamp,              // timestamp
+      Status1,                // Status1
+      Status2,                // Status2
+      PaymentStatus,          // Payment status
+      anticipated_project_start_date, // anticipated_project_start_date
+      TeamName,               // TeamName
+      Textarea,               // Textarea
+      Created_time,           // Created time
+      partner,                // partner
+      Partner_confirmation,   // Partner_confirmation
+      '',                     // <--- Пустая колонка после Partner_confirmation (если она есть)
+      totalsumm,              // totalsumm
+      month,                  // month
+      X1Q,                    // X1Q
+      XXX,                    // XXX
+      industrymarket_expertise, // industrymarket_expertise
+      ...specialistFields,    // sp1, hours1, quantity1, summ1, ..., sp10, hours10, quantity10, summ10
       Brief, Chat, Documents, nda, Link, Type, Type2,
       spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10
     ];
 
-    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
-
+    // Пишем в таблицу начиная с B1 (строго по колонкам)
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${sheetOrders}!A1`,
+      range: 'DataBaseCollty_Teams!B1',
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [row] },
@@ -586,7 +584,7 @@ app.post('/addTeam', async (req, res) => {
     res.status(200).json({ success: true });
   } catch (err) {
     console.error('Error in /addTeam:', err);
-    res.status(500).json({ error: 'Failed to append team' });
+    res.status(500).json({ error: 'Failed to append data' });
   }
 });
 
