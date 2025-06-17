@@ -532,33 +532,48 @@ app.patch('/updateTeam', async (req, res) => {
 app.post('/addTeam', async (req, res) => {
   try {
     const {
-      TeamName, partner, Status1, Type, Type2, anticipated_project_start_date,
-      X1Q, Partner_confirmation, "Payment status": PaymentStatus, Textarea, Brief, Chat, Link,
+      Status1, Status2, "Payment status": PaymentStatus, anticipated_project_start_date, TeamName,
+      Textarea, partner, Partner_confirmation, totalsumm, month, X1Q, industrymarket_expertise,
       // специалисты
-      sp1, sp2, sp3, sp4, sp5, sp6, sp7, sp8, sp9, sp10,
-      quantity1, quantity2, quantity3, quantity4, quantity5, quantity6, quantity7, quantity8, quantity9, quantity10,
+      sp1, hours1, quantity1, summ1,
+      sp2, hours2, quantity2, summ2,
+      sp3, hours3, quantity3, summ3,
+      sp4, hours4, quantity4, summ4,
+      sp5, hours5, quantity5, summ5,
+      sp6, hours6, quantity6, summ6,
+      sp7, hours7, quantity7, summ7,
+      sp8, hours8, quantity8, summ8,
+      sp9, hours9, quantity9, summ9,
+      sp10, hours10, quantity10, summ10,
+      Brief, Chat, Documents, nda, Link, Type, Type2,
       spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10
     } = req.body;
+
+    // Создать поле времени создания
+    const createdTime = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' });
+
+    const row = [
+      Status1, Status2, PaymentStatus, anticipated_project_start_date, TeamName, Textarea, createdTime, partner, Partner_confirmation,
+      '', // пустая колонка если она у тебя есть после Partner_confirmation
+      totalsumm, month, X1Q, '', // XXX — если это лишняя пустая колонка
+      industrymarket_expertise,
+      sp1, hours1, quantity1, summ1,
+      sp2, hours2, quantity2, summ2,
+      sp3, hours3, quantity3, summ3,
+      sp4, hours4, quantity4, summ4,
+      sp5, hours5, quantity5, summ5,
+      sp6, hours6, quantity6, summ6,
+      sp7, hours7, quantity7, summ7,
+      sp8, hours8, quantity8, summ8,
+      sp9, hours9, quantity9, summ9,
+      sp10, hours10, quantity10, summ10,
+      Brief, Chat, Documents, nda, Link, Type, Type2,
+      spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10
+    ];
 
     const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
-
-    // Формируем новую строку в нужном порядке!
-    const row = [
-      TeamName, partner, Status1, Type, Type2, anticipated_project_start_date,
-      X1Q, Partner_confirmation, PaymentStatus, Textarea, Brief, Chat, Link,
-      sp1, quantity1, spcv1,
-      sp2, quantity2, spcv2,
-      sp3, quantity3, spcv3,
-      sp4, quantity4, spcv4,
-      sp5, quantity5, spcv5,
-      sp6, quantity6, spcv6,
-      sp7, quantity7, spcv7,
-      sp8, quantity8, spcv8,
-      sp9, quantity9, spcv9,
-      sp10, quantity10, spcv10
-    ];
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
