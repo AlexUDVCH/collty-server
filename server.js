@@ -576,6 +576,39 @@ app.post('/tasks', async (req, res) => {
     res.status(500).json({ error: 'Failed to add task' });
   }
 });
+// === GET /tasks ===
+app.get('/tasks', async (req, res) => {
+  try {
+    const { projectid = '', start = '', end = '' } = req.query;
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+    const sheetTasks = 'Database_Projectmanagement';
+    const rows = await fetchSheetWithRetry(sheets, `${sheetTasks}!A1:ZZ1000`);
+    if (!rows || rows.length === 0) return res.json([]);
+    const headers = rows[0].map(h => h.trim());
+    const data = rows.slice(1).map(row => headers.reduce((obj, key, i) => {
+      obj[key] = row[i] || '';
+      return obj;
+    }, {}));
+    // Фильтрация по projectid и датам
+    const filtered = data.filter(row => {
+      const pid = (row.projectid || row.projectId || '').toString();
+      const s = new Date(row.start).getTime();
+      const e = new Date(row.end).getTime();
+      const startQ = start ? new Date(start).getTime() : null;
+      const endQ = end ? new Date(end).getTime() : null;
+      let dateOk = true;
+      if (startQ !== null && s < startQ) dateOk = false;
+      if (endQ !== null && e > endQ) dateOk = false;
+      return (!projectid || pid === projectid) && dateOk;
+    });
+    res.json(filtered);
+  } catch (err) {
+    console.error('Error in GET /tasks:', err);
+    res.status(500).json([]);
+  }
+});
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
