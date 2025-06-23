@@ -537,6 +537,45 @@ app.patch('/tasks/:timestamp', async (req, res) => {
     res.status(500).json({ error: 'Failed to update task' });
   }
 });
+// === POST /tasks ===
+app.post('/tasks', async (req, res) => {
+  try {
+    const {
+      projectid = '',
+      title = '',
+      start = '',
+      end = '',
+      status = 'pending'
+    } = req.body;
+    if (!projectid || !title || !start || !end) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+    const sheetTasks = 'Database_Projectmanagement';
+
+    // Собираем новую задачу (timestamp - дата/время создания)
+    const timestamp = new Date().toISOString();
+    const row = [
+      timestamp, projectid, title, start, end, status
+      // ...можно добавить ещё поля, если есть в таблице
+    ];
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetTasks}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [row] },
+    });
+
+    res.status(200).json({ success: true, timestamp });
+  } catch (err) {
+    console.error('Error in POST /tasks:', err);
+    res.status(500).json({ error: 'Failed to add task' });
+  }
+});
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
