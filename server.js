@@ -489,6 +489,54 @@ function columnToLetter(col) {
   }
   return letter;
 }
+// === PATCH /tasks/:timestamp ===
+app.patch('/tasks/:timestamp', async (req, res) => {
+  const { timestamp } = req.params;
+  const { projectid, ...fields } = req.body;
+  if (!projectid || !timestamp) {
+    return res.status(400).json({ error: 'Missing projectid or timestamp' });
+  }
+  try {
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+    const sheetTasks = 'Database_Projectmanagement';
+    const rows = await fetchSheetWithRetry(sheets, `${sheetTasks}!A1:ZZ1000`);
+    const headers = rows[0];
+    const timestampCol = headers.findIndex(h => h.trim().toLowerCase() === 'timestamp');
+    const projectidCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
+    if (timestampCol < 0 || projectidCol < 0) return res.status(400).json({ error: 'No timestamp or projectid column' });
+    const rowIndex = rows.findIndex((row, i) =>
+      i > 0 &&
+      (row[timestampCol] || '').trim() === timestamp.trim() &&
+      (row[projectidCol] || '').trim() === projectid.trim()
+    );
+    if (rowIndex < 1) return res.status(404).json({ error: 'Task not found' });
+
+    const updates = [];
+    Object.entries(fields).forEach(([key, value]) => {
+      const col = headers.findIndex(h => h.trim().toLowerCase() === key.toLowerCase());
+      if (col >= 0) {
+        updates.push({
+          range: `${sheetTasks}!${columnToLetter(col)}${rowIndex + 1}`,
+          value: value
+        });
+      }
+    });
+    await Promise.all(updates.map(u =>
+      sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: u.range,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[u.value]] },
+      })
+    ));
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Error in PATCH /tasks/:timestamp', err);
+    res.status(500).json({ error: 'Failed to update task' });
+  }
+});
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
