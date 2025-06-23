@@ -489,6 +489,47 @@ function columnToLetter(col) {
   }
   return letter;
 }
+// === POST /tasks ===
+app.post('/tasks', async (req, res) => {
+  try {
+    const {
+      projectid = '',
+      title = '',
+      description = '',
+      link = '',
+      start = '',
+      end = '',
+      status = 'pending'
+    } = req.body;
+    if (!projectid || !title || !start || !end) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+    const sheetTasks = 'Database_Projectmanagement';
+
+    // Новый task: timestamp | projectid | title | description | link | start | end | status
+    const timestamp = new Date().toISOString();
+    const row = [
+      timestamp, projectid, title, description, link, start, end, status
+    ];
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetTasks}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [row] },
+    });
+
+    res.status(200).json({ success: true, timestamp });
+  } catch (err) {
+    console.error('Error in POST /tasks:', err);
+    res.status(500).json({ error: 'Failed to add task' });
+  }
+});
+
 // === PATCH /tasks/:timestamp ===
 app.patch('/tasks/:timestamp', async (req, res) => {
   const { timestamp } = req.params;
@@ -537,45 +578,57 @@ app.patch('/tasks/:timestamp', async (req, res) => {
     res.status(500).json({ error: 'Failed to update task' });
   }
 });
-// === POST /tasks ===
-app.post('/tasks', async (req, res) => {
+
+// === DELETE /tasks/:timestamp ===
+app.delete('/tasks/:timestamp', async (req, res) => {
+  const { timestamp } = req.params;
+  const { projectid } = req.query;
+  if (!projectid || !timestamp) {
+    return res.status(400).json({ error: 'Missing projectid or timestamp' });
+  }
   try {
-    const {
-      projectid = '',
-      title = '',
-      start = '',
-      end = '',
-      status = 'pending'
-    } = req.body;
-    if (!projectid || !title || !start || !end) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
     const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
     const sheetTasks = 'Database_Projectmanagement';
+    const rows = await fetchSheetWithRetry(sheets, `${sheetTasks}!A1:ZZ1000`);
+    const headers = rows[0];
+    const timestampCol = headers.findIndex(h => h.trim().toLowerCase() === 'timestamp');
+    const projectidCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
+    if (timestampCol < 0 || projectidCol < 0) return res.status(400).json({ error: 'No timestamp or projectid column' });
+    const rowIndex = rows.findIndex((row, i) =>
+      i > 0 &&
+      (row[timestampCol] || '').trim() === timestamp.trim() &&
+      (row[projectidCol] || '').trim() === projectid.trim()
+    );
+    if (rowIndex < 1) return res.status(404).json({ error: 'Task not found' });
 
-    // Собираем новую задачу (timestamp - дата/время создания)
-    const timestamp = new Date().toISOString();
-    const row = [
-      timestamp, projectid, title, start, end, status
-      // ...можно добавить ещё поля, если есть в таблице
-    ];
-
-    await sheets.spreadsheets.values.append({
+    // Получи sheetId для листа задач (можно найти в URL Google Sheets)
+    const sheetId = 759220666; // <-- это твой sheetId для Database_Projectmanagement
+    await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
-      range: `${sheetTasks}!A1`,
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [row] },
+      requestBody: {
+        requests: [
+          {
+            deleteDimension: {
+              range: {
+                sheetId: sheetId,
+                dimension: 'ROWS',
+                startIndex: rowIndex,
+                endIndex: rowIndex + 1,
+              }
+            }
+          }
+        ]
+      }
     });
-
-    res.status(200).json({ success: true, timestamp });
+    res.json({ success: true });
   } catch (err) {
-    console.error('Error in POST /tasks:', err);
-    res.status(500).json({ error: 'Failed to add task' });
+    console.error('Error in DELETE /tasks/:timestamp', err);
+    res.status(500).json({ error: 'Failed to delete task' });
   }
 });
+
 // === GET /tasks ===
 app.get('/tasks', async (req, res) => {
   try {
