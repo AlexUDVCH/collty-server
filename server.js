@@ -497,6 +497,7 @@ app.post('/tasks', async (req, res) => {
       title = '',
       description = '',
       link = '',
+      link2 = '',
       start = '',
       end = '',
       status = 'pending'
@@ -509,10 +510,10 @@ app.post('/tasks', async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth: client });
     const sheetTasks = 'Database_Projectmanagement';
 
-    // Новый task: timestamp | projectid | title | description | link | start | end | status
+    // Новый task: timestamp | projectid | title | description | link | link2 | start | end | status
     const timestamp = new Date().toISOString();
     const row = [
-      timestamp, projectid, title, description, link, start, end, status
+      timestamp, projectid, title, description, link, link2, start, end, status
     ];
 
     await sheets.spreadsheets.values.append({
