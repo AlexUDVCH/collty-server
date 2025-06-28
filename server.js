@@ -500,16 +500,21 @@ function columnToLetter(col) {
 app.post('/tasks', async (req, res) => {
   try {
     const {
-  projectid = '',
-  title = '',
-  description = '',
-  link = '',
-  link2 = '',
-  start = '',
-  end = '',
-  status = 'pending',
-  priority = ''
-} = req.body;
+      projectid = '',
+      title = '',
+      description = '',
+      link = '',
+      link2 = '',
+      start = '',
+      end = '',
+      status = 'pending',
+      priority = ''
+    } = req.body;
+    // Добавляем новые поля часов:
+    const hrFields = [];
+    for (let i = 1; i <= 10; i++) {
+      hrFields.push(req.body[`hr${i}`] || '');
+    }
     if (!projectid || !title || !start || !end) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -518,11 +523,12 @@ app.post('/tasks', async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth: client });
     const sheetTasks = 'Database_Projectmanagement';
 
-    // Новый task: timestamp | projectid | title | description | link | link2 | start | end | status
+    // Новый task: timestamp | projectid | title | description | link | link2 | start | end | status | priority | hr1..hr10
     const timestamp = new Date().toISOString();
     const row = [
-  timestamp, projectid, title, description, link, link2, start, end, status, priority
-];
+      timestamp, projectid, title, description, link, link2, start, end, status, priority,
+      ...hrFields // hr1, hr2, ..., hr10
+    ];
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
