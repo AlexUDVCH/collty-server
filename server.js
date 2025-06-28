@@ -12,7 +12,14 @@ const spreadsheetId = '1GIl15j9L1-KPyn2evruz3F0sscNo308mAC7huXm0WkY';
 const sheetOrders = 'DataBaseCollty_Teams';
 const sheetLeads = 'LeadsCollty_Responses';
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    'https://collty.com',
+    'https://www.collty.com',
+    'http://localhost:3000'
+  ],
+  credentials: true, // если нужны куки или авторизация
+}));
 app.use(express.json());
 
 app.get('/', (req, res) => {
