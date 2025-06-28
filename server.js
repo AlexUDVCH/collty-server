@@ -493,15 +493,16 @@ function columnToLetter(col) {
 app.post('/tasks', async (req, res) => {
   try {
     const {
-      projectid = '',
-      title = '',
-      description = '',
-      link = '',
-      link2 = '',
-      start = '',
-      end = '',
-      status = 'pending'
-    } = req.body;
+  projectid = '',
+  title = '',
+  description = '',
+  link = '',
+  link2 = '',
+  start = '',
+  end = '',
+  status = 'pending',
+  priority = ''
+} = req.body;
     if (!projectid || !title || !start || !end) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -513,8 +514,8 @@ app.post('/tasks', async (req, res) => {
     // Новый task: timestamp | projectid | title | description | link | link2 | start | end | status
     const timestamp = new Date().toISOString();
     const row = [
-      timestamp, projectid, title, description, link, link2, start, end, status
-    ];
+  timestamp, projectid, title, description, link, link2, start, end, status, priority
+];
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
