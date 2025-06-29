@@ -738,26 +738,37 @@ app.get('/leads/:id', async (req, res) => {
 
     const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
     const headers = rows[0].map(h => h.trim());
+    console.log('[GET /leads/:id] Headers:', headers);
 
-    // Ищем первый подходящий столбец: projectid, unique_id, id, timestamp
+    // Показываем все id значения для ручной сверки
     const idCol = headers.findIndex(h =>
       h.trim().toLowerCase() === 'projectid' ||
       h.trim().toLowerCase() === 'id' ||
       h.trim().toLowerCase() === 'unique_id' ||
       h.trim().toLowerCase() === 'timestamp'
     );
-    if (idCol < 0) return res.status(400).json({ error: 'No projectid/id/unique_id/timestamp column' });
+    if (idCol < 0) {
+      console.log('[GET /leads/:id] Нет нужной id-колонки');
+      return res.status(400).json({ error: 'No projectid/id/unique_id/timestamp column' });
+    }
 
-    // Ищем строку по значению id (как PATCH)
+    // Выведи все id в консоль
+    const allIds = rows.slice(1).map(row => row[idCol]);
+    console.log('[GET /leads/:id] All ids:', allIds);
+    console.log('[GET /leads/:id] Looking for:', id);
+
+    // Находим строку по id (сравниваем .trim())
     const row = rows.find((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
-    if (!row) return res.status(404).json({ error: 'Row not found' });
+    if (!row) {
+      console.log('[GET /leads/:id] Row not found for:', id);
+      return res.status(404).json({ error: 'Row not found' });
+    }
 
     const result = headers.reduce((obj, key, i) => {
       obj[key] = row[i] || '';
       return obj;
     }, {});
 
-    // Преобразуем чаты если нужно
     ['ClientChat', 'PartnerChat'].forEach(field => {
       if (result[field]) {
         try {
