@@ -786,7 +786,6 @@ app.get('/leads/:id/chat', async (req, res) => {
   }
 });
 
-// === PATCH /leads/:id ===
 app.patch('/leads/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -804,9 +803,12 @@ app.patch('/leads/:id', async (req, res) => {
     Object.entries(req.body).forEach(([key, value]) => {
       const col = headers.findIndex(h => h.trim() === key);
       if (col >= 0) {
-        // Сериализация для ClientChat и PartnerChat
-        if ((key === 'ClientChat' || key === 'PartnerChat') && typeof value === 'object') {
-          value = JSON.stringify(value);
+        if ((key === 'ClientChat' || key === 'PartnerChat') && typeof value !== 'string') {
+          try {
+            value = JSON.stringify(value);
+          } catch {
+            value = '';
+          }
         }
         updates.push({
           range: `${sheetLeads}!${columnToLetter(col)}${rowIndex + 1}`,
