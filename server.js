@@ -758,44 +758,20 @@ app.get('/leads/:id', async (req, res) => {
   }
 });
 
-// === GET /leads/:id/chat ===
-app.get('/leads/:id/chat', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
-    const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
-    const headers = rows[0].map(h => h.trim());
-    const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
-    if (idCol < 0) return res.status(400).json({ error: 'No projectid column' });
-    const row = rows.find((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
-    if (!row) return res.status(404).json({ error: 'Row not found' });
-    const fieldObj = headers.reduce((obj, key, i) => { obj[key] = row[i] || ''; return obj; }, {});
-    const clientMsgs = fieldObj.ClientChat ? safeJsonParse(fieldObj.ClientChat) : [];
-    const partnerMsgs = fieldObj.PartnerChat ? safeJsonParse(fieldObj.PartnerChat) : [];
-    const allMsgs = [
-      ...clientMsgs.map(m => ({ ...m, author: 'client' })),
-      ...partnerMsgs.map(m => ({ ...m, author: 'partner' }))
-    ];
-    allMsgs.sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
-    res.json(allMsgs);
-  } catch (err) {
-    console.error('Error in GET /leads/:id/chat', err);
-    res.status(500).json([]);
-  }
-});
-
 app.patch('/leads/:id', async (req, res) => {
   const { id } = req.params;
   try {
+    console.log('PATCH /leads/:id req.body:', JSON.stringify(req.body, null, 2)); // Логируем тело запроса
+
     const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
     const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
     const headers = rows[0].map(h => h.trim());
+
     const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
     if (idCol < 0) return res.status(400).json({ error: 'No projectid column' });
+
     const rowIndex = rows.findIndex((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
     if (rowIndex < 1) return res.status(404).json({ error: 'Row not found' });
 
@@ -803,7 +779,8 @@ app.patch('/leads/:id', async (req, res) => {
     Object.entries(req.body).forEach(([key, value]) => {
       const col = headers.findIndex(h => h.trim() === key);
       if (col >= 0) {
-        if ((key === 'ClientChat' || key === 'PartnerChat') && typeof value !== 'string') {
+        // Сериализуем объекты и массивы в JSON-строку
+        if (value !== null && typeof value === 'object') {
           try {
             value = JSON.stringify(value);
           } catch {
@@ -816,6 +793,7 @@ app.patch('/leads/:id', async (req, res) => {
         });
       }
     });
+
     if (!updates.length) return res.status(400).json({ error: 'No valid fields to update' });
 
     await Promise.all(updates.map(u =>
@@ -826,6 +804,9 @@ app.patch('/leads/:id', async (req, res) => {
         requestBody: { values: [[u.value]] },
       })
     ));
+
+    // Очистка кэша
+    cacheLeads = { data: null, ts: 0 };
     res.status(200).json({ success: true });
   } catch (err) {
     console.error('Error in PATCH /leads/:id', err);
