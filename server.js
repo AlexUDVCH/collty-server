@@ -740,35 +740,26 @@ app.get('/leads/:id', async (req, res) => {
     const headers = rows[0].map(h => h.trim());
     console.log('[GET /leads/:id] Headers:', headers);
 
-    // Показываем все id значения для ручной сверки
-    const idCol = headers.findIndex(h =>
-      h.trim().toLowerCase() === 'projectid' ||
-      h.trim().toLowerCase() === 'id' ||
-      h.trim().toLowerCase() === 'unique_id' ||
-      h.trim().toLowerCase() === 'timestamp'
-    );
+    // !!! SEARCH ONLY BY projectid
+    const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
     if (idCol < 0) {
       console.log('[GET /leads/:id] Нет нужной id-колонки');
-      return res.status(400).json({ error: 'No projectid/id/unique_id/timestamp column' });
+      return res.status(400).json({ error: 'No projectid column' });
     }
-
-    // Выведи все id в консоль
+    // Выведи все projectid в консоль
     const allIds = rows.slice(1).map(row => row[idCol]);
-    console.log('[GET /leads/:id] All ids:', allIds);
+    console.log('[GET /leads/:id] All projectids:', allIds);
     console.log('[GET /leads/:id] Looking for:', id);
-
-    // Находим строку по id (сравниваем .trim())
+    // Находим строку по projectid (сравниваем .trim())
     const row = rows.find((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
     if (!row) {
       console.log('[GET /leads/:id] Row not found for:', id);
       return res.status(404).json({ error: 'Row not found' });
     }
-
     const result = headers.reduce((obj, key, i) => {
       obj[key] = row[i] || '';
       return obj;
     }, {});
-
     ['ClientChat', 'PartnerChat'].forEach(field => {
       if (result[field]) {
         try {
@@ -780,9 +771,7 @@ app.get('/leads/:id', async (req, res) => {
         result[field] = [];
       }
     });
-
     res.json(result);
-
   } catch (err) {
     console.error('Error in GET /leads/:id', err);
     res.status(500).json({ error: 'Failed to load lead by id' });
@@ -798,6 +787,7 @@ app.patch('/leads/:id', async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth: client });
     const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
     const headers = rows[0].map(h => h.trim());
+    // !!! SEARCH ONLY BY projectid
     const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
     if (idCol < 0) return res.status(400).json({ error: 'No projectid column' });
     const rowIndex = rows.findIndex((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
@@ -805,21 +795,21 @@ app.patch('/leads/:id', async (req, res) => {
 
     const updates = [];
     Object.entries(req.body).forEach(([key, value]) => {
-  const col = headers.findIndex(h => h.trim() === key);
-  if (col >= 0) {
-    if ((key === 'ClientChat' || key === 'PartnerChat') && typeof value !== 'string') {
-      try {
-        value = JSON.stringify(value);
-      } catch {
-        value = '';
+      const col = headers.findIndex(h => h.trim() === key);
+      if (col >= 0) {
+        if ((key === 'ClientChat' || key === 'PartnerChat') && typeof value !== 'string') {
+          try {
+            value = JSON.stringify(value);
+          } catch {
+            value = '';
+          }
+        }
+        updates.push({
+          range: `${sheetLeads}!${columnToLetter(col)}${rowIndex + 1}`,
+          value: value
+        });
       }
-    }
-    updates.push({
-      range: `${sheetLeads}!${columnToLetter(col)}${rowIndex + 1}`,
-      value: value
     });
-  }
-});
     if (!updates.length) return res.status(400).json({ error: 'No valid fields to update' });
 
     await Promise.all(updates.map(u =>
