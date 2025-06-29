@@ -738,22 +738,21 @@ app.get('/leads/:id', async (req, res) => {
 
     const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
     const headers = rows[0].map(h => h.trim());
-    console.log('[GET /leads/:id] Headers:', headers);
+    // console.log('[GET /leads/:id] Headers:', headers);
 
     // !!! SEARCH ONLY BY projectid
     const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
     if (idCol < 0) {
-      console.log('[GET /leads/:id] Нет нужной id-колонки');
+      // console.log('[GET /leads/:id] Нет нужной id-колонки');
       return res.status(400).json({ error: 'No projectid column' });
     }
-    // Выведи все projectid в консоль
-    const allIds = rows.slice(1).map(row => row[idCol]);
-    console.log('[GET /leads/:id] All projectids:', allIds);
-    console.log('[GET /leads/:id] Looking for:', id);
+    // const allIds = rows.slice(1).map(row => row[idCol]);
+    // console.log('[GET /leads/:id] All projectids:', allIds);
+    // console.log('[GET /leads/:id] Looking for:', id);
     // Находим строку по projectid (сравниваем .trim())
     const row = rows.find((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
     if (!row) {
-      console.log('[GET /leads/:id] Row not found for:', id);
+      // console.log('[GET /leads/:id] Row not found for:', id);
       return res.status(404).json({ error: 'Row not found' });
     }
     const result = headers.reduce((obj, key, i) => {
@@ -780,7 +779,7 @@ app.get('/leads/:id', async (req, res) => {
 
 app.patch('/leads/:id', async (req, res) => {
   const { id } = req.params;
-  console.log('PATCH /leads/:id body:', req.body); // Лог тела для отладки
+  // console.log('PATCH /leads/:id body:', req.body); // Лог тела для отладки
   try {
     const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const client = await auth.getClient();
@@ -833,5 +832,5 @@ function safeJsonParse(str) {
 }
 
 app.listen(port, () => {
-  console.log(`🚀 Server running on port ${port}`);
+  // console.log(`🚀 Server running on port ${port}`);
 });
