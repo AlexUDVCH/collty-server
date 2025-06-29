@@ -416,10 +416,11 @@ app.patch('/leads/:id', async (req, res) => {
     const headers = rows[0].map(h => h.trim());
     // Находим первый уникальный столбец
     const idCol = headers.findIndex(h =>
-      h.toLowerCase() === 'id' ||
-      h.toLowerCase() === 'unique_id' ||
-      h.toLowerCase() === 'timestamp'
-    );
+  h.trim().toLowerCase() === 'projectid' ||
+  h.trim().toLowerCase() === 'id' ||
+  h.trim().toLowerCase() === 'unique_id' ||
+  h.trim().toLowerCase() === 'timestamp'
+);
     if (idCol < 0) return res.status(400).json({ error: 'No id/unique_id/timestamp column' });
     const rowIndex = rows.findIndex((row, i) =>
       i > 0 &&
