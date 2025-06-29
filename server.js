@@ -405,6 +405,56 @@ app.patch('/updateOrderHours', async (req, res) => {
   }
 });
 
+// === PATCH /leads/:id (обновление по id для чата и других полей) ===
+app.patch('/leads/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+    const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
+    const headers = rows[0].map(h => h.trim());
+    // Находим первый уникальный столбец
+    const idCol = headers.findIndex(h =>
+      h.toLowerCase() === 'id' ||
+      h.toLowerCase() === 'unique_id' ||
+      h.toLowerCase() === 'timestamp'
+    );
+    if (idCol < 0) return res.status(400).json({ error: 'No id/unique_id/timestamp column' });
+    const rowIndex = rows.findIndex((row, i) =>
+      i > 0 &&
+      (row[idCol] || '').trim() === id.trim()
+    );
+    if (rowIndex < 1) return res.status(404).json({ error: 'Row not found' });
+
+    const updates = [];
+    Object.entries(req.body).forEach(([key, value]) => {
+      const col = headers.findIndex(h => h.trim() === key);
+      if (col >= 0) {
+        updates.push({
+          range: `${sheetLeads}!${columnToLetter(col)}${rowIndex + 1}`,
+          value: value
+        });
+      }
+    });
+    if (!updates.length) return res.status(400).json({ error: 'No valid fields to update' });
+
+    await Promise.all(updates.map(u =>
+      sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: u.range,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[u.value]] },
+      })
+    ));
+    res.status(200).json({ success: true });
+    cacheLeads = { data: null, ts: 0 };
+  } catch (err) {
+    console.error('Error in PATCH /leads/:id', err);
+    res.status(500).json({ error: 'Failed to update lead by id' });
+  }
+});
+
 // === PATCH /updateTeam ===
 app.patch('/updateTeam', async (req, res) => {
   const { teamName, ...fields } = req.body;
