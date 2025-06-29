@@ -729,7 +729,6 @@ app.get('/tasks', async (req, res) => {
     res.status(500).json([]);
   }
 });
-// === GET /leads/:id — получить всю строку по projectid ===
 app.get('/leads/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -751,7 +750,21 @@ app.get('/leads/:id', async (req, res) => {
       return obj;
     }, {});
 
+    ['ClientChat', 'PartnerChat'].forEach(field => {
+      if (result[field]) {
+        try {
+          result[field] = JSON.parse(result[field]);
+        } catch {
+          result[field] = [];
+        }
+      } else {
+        result[field] = [];
+      }
+    });
+
+    // Обязательно отправляем ответ клиенту
     res.json(result);
+
   } catch (err) {
     console.error('Error in GET /leads/:id', err);
     res.status(500).json({ error: 'Failed to load lead by id' });
