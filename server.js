@@ -739,9 +739,16 @@ app.get('/leads/:id', async (req, res) => {
     const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
     const headers = rows[0].map(h => h.trim());
 
-    const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
-    if (idCol < 0) return res.status(400).json({ error: 'No projectid column' });
+    // Ищем первый подходящий столбец: projectid, unique_id, id, timestamp
+    const idCol = headers.findIndex(h =>
+      h.trim().toLowerCase() === 'projectid' ||
+      h.trim().toLowerCase() === 'id' ||
+      h.trim().toLowerCase() === 'unique_id' ||
+      h.trim().toLowerCase() === 'timestamp'
+    );
+    if (idCol < 0) return res.status(400).json({ error: 'No projectid/id/unique_id/timestamp column' });
 
+    // Ищем строку по значению id (как PATCH)
     const row = rows.find((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
     if (!row) return res.status(404).json({ error: 'Row not found' });
 
@@ -750,6 +757,7 @@ app.get('/leads/:id', async (req, res) => {
       return obj;
     }, {});
 
+    // Преобразуем чаты если нужно
     ['ClientChat', 'PartnerChat'].forEach(field => {
       if (result[field]) {
         try {
@@ -762,7 +770,6 @@ app.get('/leads/:id', async (req, res) => {
       }
     });
 
-    // Обязательно отправляем ответ клиенту
     res.json(result);
 
   } catch (err) {
