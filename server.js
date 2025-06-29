@@ -740,15 +740,12 @@ app.get('/leads/:id', async (req, res) => {
     const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
     const headers = rows[0].map(h => h.trim());
 
-    // Ищем индекс колонки projectid
     const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
     if (idCol < 0) return res.status(400).json({ error: 'No projectid column' });
 
-    // Находим строку с совпадением projectid
     const row = rows.find((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
     if (!row) return res.status(404).json({ error: 'Row not found' });
 
-    // Преобразуем строку в объект ключ:значение
     const result = headers.reduce((obj, key, i) => {
       obj[key] = row[i] || '';
       return obj;
@@ -761,7 +758,7 @@ app.get('/leads/:id', async (req, res) => {
   }
 });
 
-// === GET /leads/:id/chat === (уже есть, оставляем) ===
+// === GET /leads/:id/chat ===
 app.get('/leads/:id/chat', async (req, res) => {
   const { id } = req.params;
   try {
@@ -770,21 +767,17 @@ app.get('/leads/:id/chat', async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth: client });
     const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
     const headers = rows[0].map(h => h.trim());
-    // Ищем только по projectid!
     const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
     if (idCol < 0) return res.status(400).json({ error: 'No projectid column' });
     const row = rows.find((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
     if (!row) return res.status(404).json({ error: 'Row not found' });
     const fieldObj = headers.reduce((obj, key, i) => { obj[key] = row[i] || ''; return obj; }, {});
-    // Склеиваем ClientChat и PartnerChat
     const clientMsgs = fieldObj.ClientChat ? safeJsonParse(fieldObj.ClientChat) : [];
     const partnerMsgs = fieldObj.PartnerChat ? safeJsonParse(fieldObj.PartnerChat) : [];
-    // Добавляем поле author (client/partner)
     const allMsgs = [
       ...clientMsgs.map(m => ({ ...m, author: 'client' })),
       ...partnerMsgs.map(m => ({ ...m, author: 'partner' }))
     ];
-    // Сортировка по времени (если date)
     allMsgs.sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
     res.json(allMsgs);
   } catch (err) {
@@ -793,7 +786,7 @@ app.get('/leads/:id/chat', async (req, res) => {
   }
 });
 
-// === PATCH /leads/:id === (уже есть, оставляем) ===
+// === PATCH /leads/:id ===
 app.patch('/leads/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -802,10 +795,8 @@ app.patch('/leads/:id', async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth: client });
     const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
     const headers = rows[0].map(h => h.trim());
-    // Находим индекс колонки projectid
     const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
     if (idCol < 0) return res.status(400).json({ error: 'No projectid column' });
-    // Ищем индекс строки по projectid
     const rowIndex = rows.findIndex((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
     if (rowIndex < 1) return res.status(404).json({ error: 'Row not found' });
 
@@ -813,6 +804,10 @@ app.patch('/leads/:id', async (req, res) => {
     Object.entries(req.body).forEach(([key, value]) => {
       const col = headers.findIndex(h => h.trim() === key);
       if (col >= 0) {
+        // Сериализация для ClientChat и PartnerChat
+        if ((key === 'ClientChat' || key === 'PartnerChat') && typeof value === 'object') {
+          value = JSON.stringify(value);
+        }
         updates.push({
           range: `${sheetLeads}!${columnToLetter(col)}${rowIndex + 1}`,
           value: value
