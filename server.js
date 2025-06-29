@@ -422,10 +422,11 @@ app.patch('/leads/:id', async (req, res) => {
   h.trim().toLowerCase() === 'timestamp'
 );
     if (idCol < 0) return res.status(400).json({ error: 'No id/unique_id/timestamp column' });
-    const rowIndex = rows.findIndex((row, i) =>
-      i > 0 &&
-      (row[idCol] || '').trim() === id.trim()
-    );
+    const rowIndex = rows.findIndex((row, i) => {
+      if (i === 0) return false;
+      const obj = headers.reduce((acc, key, j) => { acc[key] = row[j] || ''; return acc; }, {});
+      return (obj.projectid || '').trim() === id.trim();
+    });
     if (rowIndex < 1) return res.status(404).json({ error: 'Row not found' });
 
     const updates = [];
