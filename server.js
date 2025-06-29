@@ -729,7 +729,39 @@ app.get('/tasks', async (req, res) => {
     res.status(500).json([]);
   }
 });
-// === GET /leads/:id/chat ===
+// === GET /leads/:id — получить всю строку по projectid ===
+app.get('/leads/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+
+    const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
+    const headers = rows[0].map(h => h.trim());
+
+    // Ищем индекс колонки projectid
+    const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
+    if (idCol < 0) return res.status(400).json({ error: 'No projectid column' });
+
+    // Находим строку с совпадением projectid
+    const row = rows.find((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
+    if (!row) return res.status(404).json({ error: 'Row not found' });
+
+    // Преобразуем строку в объект ключ:значение
+    const result = headers.reduce((obj, key, i) => {
+      obj[key] = row[i] || '';
+      return obj;
+    }, {});
+
+    res.json(result);
+  } catch (err) {
+    console.error('Error in GET /leads/:id', err);
+    res.status(500).json({ error: 'Failed to load lead by id' });
+  }
+});
+
+// === GET /leads/:id/chat === (уже есть, оставляем) ===
 app.get('/leads/:id/chat', async (req, res) => {
   const { id } = req.params;
   try {
@@ -758,6 +790,49 @@ app.get('/leads/:id/chat', async (req, res) => {
   } catch (err) {
     console.error('Error in GET /leads/:id/chat', err);
     res.status(500).json([]);
+  }
+});
+
+// === PATCH /leads/:id === (уже есть, оставляем) ===
+app.patch('/leads/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+    const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
+    const headers = rows[0].map(h => h.trim());
+    // Находим индекс колонки projectid
+    const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
+    if (idCol < 0) return res.status(400).json({ error: 'No projectid column' });
+    // Ищем индекс строки по projectid
+    const rowIndex = rows.findIndex((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
+    if (rowIndex < 1) return res.status(404).json({ error: 'Row not found' });
+
+    const updates = [];
+    Object.entries(req.body).forEach(([key, value]) => {
+      const col = headers.findIndex(h => h.trim() === key);
+      if (col >= 0) {
+        updates.push({
+          range: `${sheetLeads}!${columnToLetter(col)}${rowIndex + 1}`,
+          value: value
+        });
+      }
+    });
+    if (!updates.length) return res.status(400).json({ error: 'No valid fields to update' });
+
+    await Promise.all(updates.map(u =>
+      sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: u.range,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[u.value]] },
+      })
+    ));
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Error in PATCH /leads/:id', err);
+    res.status(500).json({ error: 'Failed to update lead by id' });
   }
 });
 
