@@ -729,6 +729,46 @@ app.get('/tasks', async (req, res) => {
     res.status(500).json([]);
   }
 });
+// === GET /leads/:id/chat ===
+app.get('/leads/:id/chat', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+    const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
+    const headers = rows[0].map(h => h.trim());
+    const idCol = headers.findIndex(h =>
+      h.trim().toLowerCase() === 'projectid' ||
+      h.trim().toLowerCase() === 'id' ||
+      h.trim().toLowerCase() === 'unique_id' ||
+      h.trim().toLowerCase() === 'timestamp'
+    );
+    if (idCol < 0) return res.status(400).json({ error: 'No id/unique_id/timestamp column' });
+    const row = rows.find((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
+    if (!row) return res.status(404).json({ error: 'Row not found' });
+    const fieldObj = headers.reduce((obj, key, i) => { obj[key] = row[i] || ''; return obj; }, {});
+    // Склеиваем ClientChat и PartnerChat
+    const clientMsgs = fieldObj.ClientChat ? safeJsonParse(fieldObj.ClientChat) : [];
+    const partnerMsgs = fieldObj.PartnerChat ? safeJsonParse(fieldObj.PartnerChat) : [];
+    // Добавляем поле author (client/partner)
+    const allMsgs = [
+      ...clientMsgs.map(m => ({ ...m, author: 'client' })),
+      ...partnerMsgs.map(m => ({ ...m, author: 'partner' }))
+    ];
+    // Сортировка по времени (если date)
+    allMsgs.sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+    res.json(allMsgs);
+  } catch (err) {
+    console.error('Error in GET /leads/:id/chat', err);
+    res.status(500).json([]);
+  }
+});
+
+// Utility для безопасного парсинга JSON:
+function safeJsonParse(str) {
+  try { return JSON.parse(str); } catch (e) { return []; }
+}
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
