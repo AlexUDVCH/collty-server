@@ -774,23 +774,21 @@ app.patch('/leads/:id', async (req, res) => {
 
     const updates = [];
     Object.entries(req.body).forEach(([key, value]) => {
-      const col = headers.findIndex(h => h.trim() === key);
-      if (col >= 0) {
-        if (key === 'ClientChat' || key === 'PartnerChat') {
-          if (typeof value !== 'string') {
-            try {
-              value = JSON.stringify(value);
-            } catch {
-              value = '';
-            }
-          }
-        }
-        updates.push({
-          range: `${sheetLeads}!${columnToLetter(col)}${rowIndex + 1}`,
-          value: value
-        });
+  const col = headers.findIndex(h => h.trim() === key);
+  if (col >= 0) {
+    if ((key === 'ClientChat' || key === 'PartnerChat') && typeof value !== 'string') {
+      try {
+        value = JSON.stringify(value);
+      } catch {
+        value = '';
       }
+    }
+    updates.push({
+      range: `${sheetLeads}!${columnToLetter(col)}${rowIndex + 1}`,
+      value: value
     });
+  }
+});
     if (!updates.length) return res.status(400).json({ error: 'No valid fields to update' });
 
     await Promise.all(updates.map(u =>
