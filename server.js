@@ -729,6 +729,7 @@ app.get('/tasks', async (req, res) => {
     res.status(500).json([]);
   }
 });
+// --- GET /leads/:id ---
 app.get('/leads/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -738,28 +739,19 @@ app.get('/leads/:id', async (req, res) => {
 
     const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
     const headers = rows[0].map(h => h.trim());
-    // console.log('[GET /leads/:id] Headers:', headers);
 
-    // !!! SEARCH ONLY BY projectid
     const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
-    if (idCol < 0) {
-      // console.log('[GET /leads/:id] Нет нужной id-колонки');
-      return res.status(400).json({ error: 'No projectid column' });
-    }
-    // const allIds = rows.slice(1).map(row => row[idCol]);
-    // console.log('[GET /leads/:id] All projectids:', allIds);
-    // console.log('[GET /leads/:id] Looking for:', id);
-    // Находим строку по projectid (сравниваем .trim())
+    if (idCol < 0) return res.status(400).json({ error: 'No projectid column' });
+
     const row = rows.find((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
-    if (!row) {
-      // console.log('[GET /leads/:id] Row not found for:', id);
-      return res.status(404).json({ error: 'Row not found' });
-    }
+    if (!row) return res.status(404).json({ error: 'Row not found' });
+
     const result = headers.reduce((obj, key, i) => {
       obj[key] = row[i] || '';
       return obj;
     }, {});
-    ['ClientChat', 'PartnerChat'].forEach(field => {
+    // --- Добавляем ManagerChat ---
+    ['ClientChat', 'PartnerChat', 'ManagerChat'].forEach(field => {
       if (result[field]) {
         try {
           result[field] = JSON.parse(result[field]);
@@ -777,16 +769,16 @@ app.get('/leads/:id', async (req, res) => {
   }
 });
 
+// --- PATCH /leads/:id ---
 app.patch('/leads/:id', async (req, res) => {
   const { id } = req.params;
-  // console.log('PATCH /leads/:id body:', req.body); // Лог тела для отладки
   try {
     const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
     const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
     const headers = rows[0].map(h => h.trim());
-    // !!! SEARCH ONLY BY projectid
+
     const idCol = headers.findIndex(h => h.trim().toLowerCase() === 'projectid');
     if (idCol < 0) return res.status(400).json({ error: 'No projectid column' });
     const rowIndex = rows.findIndex((row, i) => i > 0 && (row[idCol] || '').trim() === id.trim());
@@ -796,7 +788,7 @@ app.patch('/leads/:id', async (req, res) => {
     Object.entries(req.body).forEach(([key, value]) => {
       const col = headers.findIndex(h => h.trim() === key);
       if (col >= 0) {
-        if ((key === 'ClientChat' || key === 'PartnerChat') && typeof value !== 'string') {
+        if ((key === 'ClientChat' || key === 'PartnerChat' || key === 'ManagerChat') && typeof value !== 'string') {
           try {
             value = JSON.stringify(value);
           } catch {
