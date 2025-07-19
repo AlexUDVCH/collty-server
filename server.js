@@ -171,7 +171,8 @@ app.post('/addOrder', async (req, res) => {
   try {
     const {
       name, email, partner, teamName, specialists = [],
-      Status1 = '', Status2 = '', "Payment status": PaymentStatus = '', Textarea = '', Type = '', Type2 = '',
+      Status1 = '', Status2 = '', "Payment status": PaymentStatus = '', Textarea = '', startDate = '',
+      Type = '', Type2 = '',
       X1Q = '', industrymarket_expertise = '', anticipated_project_start_date = '',
       Partner_confirmation = '', Brief = '', Chat = '', Documents = '', nda = '',
       Link = '', totalsumm = '', month = '',
@@ -191,7 +192,7 @@ app.post('/addOrder', async (req, res) => {
     const spcvs = [spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10];
     const row = [
       now, name, email, partner, teamName,
-      Status1, Status2, PaymentStatus, Textarea, '',
+      Status1, Status2, PaymentStatus, Textarea, startDate,
       Partner_confirmation, totalsumm, month, X1Q, '',
       anticipated_project_start_date, industrymarket_expertise, Type, Type2,
       ...flat, Brief, Chat, Documents, nda, Link,
@@ -508,7 +509,7 @@ app.post('/addTeam', async (req, res) => {
     const {
       timestamp = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Tbilisi' }),
       Status1 = '', Status2 = '', PaymentStatus = '', anticipated_project_start_date = '',
-      TeamName = '', Textarea = '', Created_time = '', partner = '', Partner_confirmation = '',
+      TeamName = '', Textarea = '', startDate = '', partner = '', Partner_confirmation = '',
       totalsumm = '', month = '', X1Q = '', XXX = '', industrymarket_expertise = '',
       Brief = '', Chat = '', Documents = '', nda = '', Link = '', Type = '', Type2 = '',
       spcv1 = '', spcv2 = '', spcv3 = '', spcv4 = '', spcv5 = '', spcv6 = '', spcv7 = '', spcv8 = '', spcv9 = '', spcv10 = ''
@@ -519,7 +520,7 @@ app.post('/addTeam', async (req, res) => {
       specialistFields.push(getVal(`sp${i}`), getVal(`hours${i}`), getVal(`quantity${i}`), getVal(`summ${i}`));
     }
     const row = [
-      timestamp, Status1, Status2, PaymentStatus, anticipated_project_start_date, TeamName, Textarea, Created_time,
+      timestamp, Status1, Status2, PaymentStatus, anticipated_project_start_date, TeamName, Textarea, startDate,
       partner, Partner_confirmation, '', totalsumm, month, X1Q, XXX, industrymarket_expertise,
       ...specialistFields, Brief, Chat, Documents, nda, Link, Type, Type2,
       spcv1, spcv2, spcv3, spcv4, spcv5, spcv6, spcv7, spcv8, spcv9, spcv10
