@@ -33,10 +33,6 @@ app.options('*', cors());
 
 app.use(express.json());
 
-app.use((req, res, next) => {
-  console.log('→', req.method, req.originalUrl);
-  next();
-});
 
 app.get('/', (req, res) => {
   res.send('✅ Server is running');
@@ -460,6 +456,7 @@ app.patch('/updateOrderHours', async (req, res) => {
 async function updateTeamHandler(req, res) {
   // --- Normalize payload: support flexible naming and renaming ---
   const rawBody = req.body || {};
+  const tsBody = rawBody.timestamp ?? rawBody.Timestamp ?? null;
   // search (current) name and optional new name to rename
   const searchName = rawBody.currentTeamName ?? rawBody.teamName ?? rawBody.TeamName_old ?? rawBody.oldTeamName ?? rawBody.teamname ?? '';
   const newTeamName = rawBody.newTeamName ?? rawBody.TeamName ?? rawBody.teamNameNew ?? rawBody.team_name_new ?? null;
@@ -474,10 +471,11 @@ async function updateTeamHandler(req, res) {
     newTeamName: _omitTN7,
     teamNameNew: _omitTN8,
     team_name_new: _omitTN9,
+    timestamp: _omitTS,
+    Timestamp: _omitTS2,
     ...fields
   } = rawBody;
   if (!searchName) return res.status(400).json({ error: 'Missing teamName/currentTeamName in body', receivedKeys: Object.keys(rawBody) });
-  console.log('updateTeam payload:', { searchName, newTeamName, keys: Object.keys(fields) });
   try {
     const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const client = await auth.getClient();
@@ -487,12 +485,23 @@ async function updateTeamHandler(req, res) {
     // Normalize header detection: accept "TeamName" and "Team Name"
     const headerKey = (h) => h.trim().toLowerCase().replace(/\s+/g, '');
     const teamNameCol = headers.findIndex(h => headerKey(h) === 'teamname');
+    const timestampCol = headers.findIndex(h => headerKey(h) === 'timestamp');
     const norm = s => (s ?? '').toString().trim().toLowerCase();
-    let targetRowIndex = rows.findIndex((row, i) => i > 0 && norm(row[teamNameCol]) === norm(searchName));
-    // fallback: partial match if exact not found
+    let targetRowIndex = -1;
+    // 1) Prefer exact match by Timestamp if provided
+    if (tsBody && timestampCol >= 0) {
+      targetRowIndex = rows.findIndex((row, i) => i > 0 && norm(row[timestampCol]) === norm(tsBody));
+    }
+    // 2) Fallback: exact match by TeamName
+    if (targetRowIndex < 1) {
+      targetRowIndex = rows.findIndex((row, i) => i > 0 && norm(row[teamNameCol]) === norm(searchName));
+    }
+    // 3) Fallback: partial match by TeamName (len>=3)
     if (targetRowIndex < 1) {
       const tn = norm(searchName);
-      targetRowIndex = rows.findIndex((row, i) => i > 0 && norm(row[teamNameCol]).includes(tn) && tn.length >= 3);
+      if (tn.length >= 3) {
+        targetRowIndex = rows.findIndex((row, i) => i > 0 && norm(row[teamNameCol]).includes(tn));
+      }
     }
     if (targetRowIndex < 1) return res.status(404).json({ error: 'Team not found' });
 
