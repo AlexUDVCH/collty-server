@@ -454,11 +454,13 @@ app.patch('/updateOrderHours', async (req, res) => {
 
 // === UPDATE TEAM (универсальный хэндлер для PATCH/POST/PUT и со слэшем/без) ===
 async function updateTeamHandler(req, res) {
-  // --- Normalize payload: support flexible naming and renaming ---
+  // --- Normalize payload: enforce timestamp as required, support flexible renaming ---
   const rawBody = req.body || {};
   const tsBody = rawBody.timestamp ?? rawBody.Timestamp ?? null;
-  // search (current) name and optional new name to rename
-  const searchName = rawBody.currentTeamName ?? rawBody.teamName ?? rawBody.TeamName_old ?? rawBody.oldTeamName ?? rawBody.teamname ?? '';
+  if (!tsBody) {
+    return res.status(400).json({ error: 'timestamp is required' });
+  }
+  // optional new name to rename
   const newTeamName = rawBody.newTeamName ?? rawBody.TeamName ?? rawBody.teamNameNew ?? rawBody.team_name_new ?? null;
   // exclude known keys from fields to update
   const {
@@ -475,7 +477,6 @@ async function updateTeamHandler(req, res) {
     Timestamp: _omitTS2,
     ...fields
   } = rawBody;
-  if (!searchName) return res.status(400).json({ error: 'Missing teamName/currentTeamName in body', receivedKeys: Object.keys(rawBody) });
   try {
     const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const client = await auth.getClient();
@@ -490,23 +491,8 @@ async function updateTeamHandler(req, res) {
       return res.status(400).json({ error: 'Required columns not found', required: ['TeamName','timestamp'], headers: headers.map(h=>exactTrim(h)) });
     }
     const eq = (a,b) => exactTrim(a) === exactTrim(b);
-    let targetRowIndex = -1;
-    // 1) Prefer exact match by timestamp, if provided
-    if (tsBody) {
-      targetRowIndex = rows.findIndex((row, i) => i > 0 && eq(row[timestampCol], tsBody));
-    }
-    // 2) Fallback: exact match by TeamName
-    if (targetRowIndex < 1) {
-      targetRowIndex = rows.findIndex((row, i) => i > 0 && eq(row[teamNameCol], searchName));
-    }
-    // 3) Optional fallback: substring by TeamName (>=2 chars)
-    if (targetRowIndex < 1) {
-      const tn = exactTrim(searchName);
-      if (tn.length >= 2) {
-        targetRowIndex = rows.findIndex((row, i) => i > 0 && exactTrim(row[teamNameCol]).includes(tn));
-      }
-    }
-    if (targetRowIndex < 1) return res.status(404).json({ error: 'Team not found' });
+    const targetRowIndex = rows.findIndex((row, i) => i > 0 && eq(row[timestampCol], tsBody));
+    if (targetRowIndex < 1) return res.status(404).json({ error: 'Team not found by timestamp', timestamp: tsBody });
 
     const updates = [];
     const headerIndexByKey = (k) => {
@@ -531,13 +517,11 @@ async function updateTeamHandler(req, res) {
       }
     });
     // if client requested rename, update TeamName column explicitly
-    if (newTeamName && exactTrim(newTeamName) !== exactTrim(searchName)) {
-      if (teamNameCol >= 0) {
-        updates.push({
-          range: `${sheetOrders}!${columnToLetter(teamNameCol)}${targetRowIndex + 1}`,
-          value: newTeamName
-        });
-      }
+    if (newTeamName && teamNameCol >= 0) {
+      updates.push({
+        range: `${sheetOrders}!${columnToLetter(teamNameCol)}${targetRowIndex + 1}`,
+        value: newTeamName
+      });
     }
 
     if (!updates.length) {
@@ -549,7 +533,7 @@ async function updateTeamHandler(req, res) {
       updates: updates.map(u => ({ range: u.range, values: [[u.value]] }))
     });
 
-    res.status(200).json({ success: true, renamed: newTeamName && exactTrim(newTeamName) !== exactTrim(searchName) ? { from: searchName, to: newTeamName } : null });
+    res.status(200).json({ success: true, renamed: newTeamName ? { to: newTeamName } : null });
     cacheOrders = { data: null, ts: 0 };
   } catch (err) {
     console.error('Error in /updateTeam:', err);
@@ -878,6 +862,7 @@ function safeJsonParse(str) {
 }
 
 app.use((req, res) => {
+  console.warn('[404]', req.method, req.originalUrl);
   res.status(404).send('Not Found');
 });
 
