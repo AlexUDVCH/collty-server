@@ -482,31 +482,45 @@ async function updateTeamHandler(req, res) {
     const sheets = google.sheets({ version: 'v4', auth: client });
     const rows = await fetchSheetWithRetry(sheets, `${sheetOrders}!A1:ZZ1000`);
     const headers = rows[0];
-    // Normalize header detection: accept "TeamName" and "Team Name"
-    const headerKey = (h) => h.trim().toLowerCase().replace(/\s+/g, '');
-    const teamNameCol = headers.findIndex(h => headerKey(h) === 'teamname');
-    const timestampCol = headers.findIndex(h => headerKey(h) === 'timestamp');
-    const norm = s => (s ?? '').toString().trim().toLowerCase();
+    // EXACT column names as in the sheet
+    const exactTrim = (s) => (s ?? '').toString().trim();
+    const teamNameCol = headers.findIndex(h => exactTrim(h) === 'TeamName');
+    const timestampCol = headers.findIndex(h => exactTrim(h) === 'timestamp');
+    if (teamNameCol < 0 || timestampCol < 0) {
+      return res.status(400).json({ error: 'Required columns not found', required: ['TeamName','timestamp'], headers: headers.map(h=>exactTrim(h)) });
+    }
+    const eq = (a,b) => exactTrim(a) === exactTrim(b);
     let targetRowIndex = -1;
-    // 1) Prefer exact match by Timestamp if provided
-    if (tsBody && timestampCol >= 0) {
-      targetRowIndex = rows.findIndex((row, i) => i > 0 && norm(row[timestampCol]) === norm(tsBody));
+    // 1) Prefer exact match by timestamp, if provided
+    if (tsBody) {
+      targetRowIndex = rows.findIndex((row, i) => i > 0 && eq(row[timestampCol], tsBody));
     }
     // 2) Fallback: exact match by TeamName
     if (targetRowIndex < 1) {
-      targetRowIndex = rows.findIndex((row, i) => i > 0 && norm(row[teamNameCol]) === norm(searchName));
+      targetRowIndex = rows.findIndex((row, i) => i > 0 && eq(row[teamNameCol], searchName));
     }
-    // 3) Fallback: partial match by TeamName (len>=3)
+    // 3) Optional fallback: substring by TeamName (>=2 chars)
     if (targetRowIndex < 1) {
-      const tn = norm(searchName);
-      if (tn.length >= 3) {
-        targetRowIndex = rows.findIndex((row, i) => i > 0 && norm(row[teamNameCol]).includes(tn));
+      const tn = exactTrim(searchName);
+      if (tn.length >= 2) {
+        targetRowIndex = rows.findIndex((row, i) => i > 0 && exactTrim(row[teamNameCol]).includes(tn));
       }
     }
     if (targetRowIndex < 1) return res.status(404).json({ error: 'Team not found' });
 
     const updates = [];
-    const headerIndexByKey = (k) => headers.findIndex(h => headerKey(h) === k.trim().toLowerCase().replace(/\s+/g,'') );
+    const headerIndexByKey = (k) => {
+      const t = (s) => (s ?? '').toString().trim();
+      // 1) exact
+      let idx = headers.findIndex(h => t(h) === t(k));
+      if (idx >= 0) return idx;
+      // 2) case-insensitive
+      idx = headers.findIndex(h => t(h).toLowerCase() === t(k).toLowerCase());
+      if (idx >= 0) return idx;
+      // 3) ignore spaces (to tolerate e.g. "Payment status" vs "Payment Status")
+      idx = headers.findIndex(h => t(h).replace(/\s+/g,'').toLowerCase() === t(k).replace(/\s+/g,'').toLowerCase());
+      return idx;
+    };
     Object.entries(fields).forEach(([key, value]) => {
       const col = headerIndexByKey(key);
       if (col >= 0) {
@@ -517,7 +531,7 @@ async function updateTeamHandler(req, res) {
       }
     });
     // if client requested rename, update TeamName column explicitly
-    if (newTeamName && norm(newTeamName) !== norm(searchName)) {
+    if (newTeamName && exactTrim(newTeamName) !== exactTrim(searchName)) {
       if (teamNameCol >= 0) {
         updates.push({
           range: `${sheetOrders}!${columnToLetter(teamNameCol)}${targetRowIndex + 1}`,
@@ -527,7 +541,7 @@ async function updateTeamHandler(req, res) {
     }
 
     if (!updates.length) {
-      return res.status(400).json({ error: 'No valid fields to update', providedKeys: Object.keys(fields), knownHeaders: headers.map(h => h.trim()) });
+      return res.status(400).json({ error: 'No valid fields to update', providedKeys: Object.keys(fields), knownHeaders: headers.map(h => exactTrim(h)) });
     }
 
     await batchWriteValues({
@@ -535,7 +549,7 @@ async function updateTeamHandler(req, res) {
       updates: updates.map(u => ({ range: u.range, values: [[u.value]] }))
     });
 
-    res.status(200).json({ success: true, renamed: newTeamName && norm(newTeamName) !== norm(searchName) ? { from: searchName, to: newTeamName } : null });
+    res.status(200).json({ success: true, renamed: newTeamName && exactTrim(newTeamName) !== exactTrim(searchName) ? { from: searchName, to: newTeamName } : null });
     cacheOrders = { data: null, ts: 0 };
   } catch (err) {
     console.error('Error in /updateTeam:', err);
@@ -864,7 +878,6 @@ function safeJsonParse(str) {
 }
 
 app.use((req, res) => {
-  console.warn('404 for', req.method, req.originalUrl);
   res.status(404).send('Not Found');
 });
 
