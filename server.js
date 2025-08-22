@@ -53,6 +53,43 @@ async function fetchSheetWithRetry(sheets, range, retries = 5, delayMs = 2000) {
   }
 }
 
+// === Batch write helper with backoff (429/503 aware) ===
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+async function batchWriteValues({ sheets, spreadsheetId, updates, valueInputOption='USER_ENTERED', maxBatch=400, maxRetries=6 }) {
+  // updates: Array<{ range: 'Sheet!A1', values: [[...]] }>
+  const chunks = [];
+  for (let i = 0; i < updates.length; i += maxBatch) {
+    chunks.push(updates.slice(i, i + maxBatch));
+  }
+
+  for (const chunk of chunks) {
+    let attempt = 0;
+    while (true) {
+      try {
+        await sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            valueInputOption,
+            data: chunk
+          }
+        });
+        break;
+      } catch (err) {
+        const code = err?.code || err?.response?.status;
+        const retryAfter = Number(err?.response?.headers?.['retry-after'] || 0) * 1000;
+        if ((code === 429 || code === 503) && attempt < maxRetries) {
+          const backoff = Math.min(30000, 600 * 2 ** attempt); // up to 30s
+          await sleep(Math.max(backoff, retryAfter));
+          attempt++;
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+}
+
 // === GET /orders (with cache) ===
 app.get('/orders', async (req, res) => {
   try {
@@ -390,14 +427,10 @@ app.patch('/updateOrderHours', async (req, res) => {
         });
       }
     });
-    await Promise.all(updates.map(u =>
-      sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: u.range,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[u.value]] },
-      })
-    ));
+    await batchWriteValues({
+      sheets, spreadsheetId,
+      updates: updates.map(u => ({ range: u.range, values: [[u.value]] }))
+    });
     res.status(200).json({ success: true });
     cacheLeads = { data: null, ts: 0 };
   } catch (err) {
@@ -406,57 +439,6 @@ app.patch('/updateOrderHours', async (req, res) => {
   }
 });
 
-// === PATCH /leads/:id (обновление по id для чата и других полей) ===
-app.patch('/leads/:id', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
-    const rows = await fetchSheetWithRetry(sheets, `${sheetLeads}!A1:ZZ1000`);
-    const headers = rows[0].map(h => h.trim());
-    // Находим первый уникальный столбец
-    const idCol = headers.findIndex(h =>
-  h.trim().toLowerCase() === 'projectid' ||
-  h.trim().toLowerCase() === 'id' ||
-  h.trim().toLowerCase() === 'unique_id' ||
-  h.trim().toLowerCase() === 'timestamp'
-);
-    if (idCol < 0) return res.status(400).json({ error: 'No id/unique_id/timestamp column' });
-    const rowIndex = rows.findIndex((row, i) => {
-      if (i === 0) return false;
-      const obj = headers.reduce((acc, key, j) => { acc[key] = row[j] || ''; return acc; }, {});
-      return (obj.projectid || '').trim() === id.trim();
-    });
-    if (rowIndex < 1) return res.status(404).json({ error: 'Row not found' });
-
-    const updates = [];
-    Object.entries(req.body).forEach(([key, value]) => {
-      const col = headers.findIndex(h => h.trim() === key);
-      if (col >= 0) {
-        updates.push({
-          range: `${sheetLeads}!${columnToLetter(col)}${rowIndex + 1}`,
-          value: value
-        });
-      }
-    });
-    if (!updates.length) return res.status(400).json({ error: 'No valid fields to update' });
-
-    await Promise.all(updates.map(u =>
-      sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: u.range,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[u.value]] },
-      })
-    ));
-    res.status(200).json({ success: true });
-    cacheLeads = { data: null, ts: 0 };
-  } catch (err) {
-    console.error('Error in PATCH /leads/:id', err);
-    res.status(500).json({ error: 'Failed to update lead by id' });
-  }
-});
 
 // === PATCH /updateTeam ===
 app.patch('/updateTeam', async (req, res) => {
@@ -484,14 +466,10 @@ app.patch('/updateTeam', async (req, res) => {
         });
       }
     });
-    await Promise.all(updates.map(u =>
-      sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: u.range,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[u.value]] },
-      })
-    ));
+    await batchWriteValues({
+      sheets, spreadsheetId,
+      updates: updates.map(u => ({ range: u.range, values: [[u.value]] }))
+    });
     res.status(200).json({ success: true });
     cacheOrders = { data: null, ts: 0 };
   } catch (err) {
@@ -632,14 +610,10 @@ app.patch('/tasks/:timestamp', async (req, res) => {
         });
       }
     });
-    await Promise.all(updates.map(u =>
-      sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: u.range,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[u.value]] },
-      })
-    ));
+    await batchWriteValues({
+      sheets, spreadsheetId,
+      updates: updates.map(u => ({ range: u.range, values: [[u.value]] }))
+    });
     res.status(200).json({ success: true });
   } catch (err) {
     console.error('Error in PATCH /tasks/:timestamp', err);
@@ -804,14 +778,10 @@ app.patch('/leads/:id', async (req, res) => {
     });
     if (!updates.length) return res.status(400).json({ error: 'No valid fields to update' });
 
-    await Promise.all(updates.map(u =>
-      sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: u.range,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[u.value]] },
-      })
-    ));
+    await batchWriteValues({
+      sheets, spreadsheetId,
+      updates: updates.map(u => ({ range: u.range, values: [[u.value]] }))
+    });
     res.status(200).json({ success: true });
   } catch (err) {
     console.error('Error in PATCH /leads/:id', err);
