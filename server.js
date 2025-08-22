@@ -12,15 +12,31 @@ const spreadsheetId = '1GIl15j9L1-KPyn2evruz3F0sscNo308mAC7huXm0WkY';
 const sheetOrders = 'DataBaseCollty_Teams';
 const sheetLeads = 'LeadsCollty_Responses';
 
+
+const allowed = [
+  /^https?:\/\/([a-z0-9-]+\.)?collty\.com$/i,
+  'http://localhost:3000'
+];
 app.use(cors({
-  origin: [
-    'https://collty.com',
-    'https://www.collty.com',
-    'http://localhost:3000'
-  ],
-  credentials: true, // если нужны куки или авторизация
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);
+    const ok = allowed.some(rule => rule.test ? rule.test(origin) : rule === origin);
+    return cb(ok ? null : new Error('Not allowed by CORS'), ok);
+  },
+  methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+  credentials: true,
+  maxAge: 86400,
 }));
+// preflight
+app.options('*', cors());
+
 app.use(express.json());
+
+app.use((req, res, next) => {
+  console.log('→', req.method, req.originalUrl);
+  next();
+});
 
 app.get('/', (req, res) => {
   res.send('✅ Server is running');
@@ -440,8 +456,8 @@ app.patch('/updateOrderHours', async (req, res) => {
 });
 
 
-// === PATCH /updateTeam ===
-app.patch('/updateTeam', async (req, res) => {
+// === UPDATE TEAM (универсальный хэндлер для PATCH/POST/PUT и со слэшем/без) ===
+async function updateTeamHandler(req, res) {
   const { teamName, ...fields } = req.body;
   if (!teamName) return res.status(400).json({ error: 'Missing teamName' });
   try {
@@ -451,31 +467,37 @@ app.patch('/updateTeam', async (req, res) => {
     const rows = await fetchSheetWithRetry(sheets, `${sheetOrders}!A1:ZZ1000`);
     const headers = rows[0];
     const teamNameCol = headers.findIndex(h => h.trim().toLowerCase() === 'teamname');
-    const targetRowIndex = rows.findIndex((row, i) =>
-      i > 0 &&
-      (row[teamNameCol] || '').trim() === teamName.trim()
-    );
+    const targetRowIndex = rows.findIndex((row, i) => i > 0 && (row[teamNameCol] || '').trim() === teamName.trim());
     if (targetRowIndex < 1) return res.status(404).json({ error: 'Team not found' });
+
     const updates = [];
     Object.entries(fields).forEach(([key, value]) => {
       const col = headers.findIndex(h => h.trim().toLowerCase() === key.toLowerCase());
       if (col >= 0) {
         updates.push({
           range: `${sheetOrders}!${columnToLetter(col)}${targetRowIndex + 1}`,
-          value: value
+          value
         });
       }
     });
+
+    if (!updates.length) return res.status(400).json({ error: 'No valid fields to update' });
+
     await batchWriteValues({
       sheets, spreadsheetId,
       updates: updates.map(u => ({ range: u.range, values: [[u.value]] }))
     });
+
     res.status(200).json({ success: true });
     cacheOrders = { data: null, ts: 0 };
   } catch (err) {
     console.error('Error in /updateTeam:', err);
     res.status(500).json({ error: 'Failed to update team' });
   }
+}
+['patch','post','put'].forEach(m => {
+  app[m]('/updateTeam', updateTeamHandler);
+  app[m]('/updateTeam/', updateTeamHandler);
 });
 
 // === POST /addTeam ===
@@ -793,6 +815,11 @@ app.patch('/leads/:id', async (req, res) => {
 function safeJsonParse(str) {
   try { return JSON.parse(str); } catch (e) { return []; }
 }
+
+app.use((req, res) => {
+  console.warn('404 for', req.method, req.originalUrl);
+  res.status(404).send('Not Found');
+});
 
 app.listen(port, () => {
   // console.log(`🚀 Server running on port ${port}`);
