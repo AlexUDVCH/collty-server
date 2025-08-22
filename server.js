@@ -458,21 +458,48 @@ app.patch('/updateOrderHours', async (req, res) => {
 
 // === UPDATE TEAM (универсальный хэндлер для PATCH/POST/PUT и со слэшем/без) ===
 async function updateTeamHandler(req, res) {
-  const { teamName, ...fields } = req.body;
-  if (!teamName) return res.status(400).json({ error: 'Missing teamName' });
+  // --- Normalize payload: support flexible naming and renaming ---
+  const rawBody = req.body || {};
+  // search (current) name and optional new name to rename
+  const searchName = rawBody.currentTeamName ?? rawBody.teamName ?? rawBody.TeamName_old ?? rawBody.oldTeamName ?? rawBody.teamname ?? '';
+  const newTeamName = rawBody.newTeamName ?? rawBody.TeamName ?? rawBody.teamNameNew ?? rawBody.team_name_new ?? null;
+  // exclude known keys from fields to update
+  const {
+    teamName: _omitTN,
+    TeamName: _omitTN2,
+    teamname: _omitTN3,
+    currentTeamName: _omitTN4,
+    TeamName_old: _omitTN5,
+    oldTeamName: _omitTN6,
+    newTeamName: _omitTN7,
+    teamNameNew: _omitTN8,
+    team_name_new: _omitTN9,
+    ...fields
+  } = rawBody;
+  if (!searchName) return res.status(400).json({ error: 'Missing teamName/currentTeamName in body', receivedKeys: Object.keys(rawBody) });
+  console.log('updateTeam payload:', { searchName, newTeamName, keys: Object.keys(fields) });
   try {
     const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
     const rows = await fetchSheetWithRetry(sheets, `${sheetOrders}!A1:ZZ1000`);
     const headers = rows[0];
-    const teamNameCol = headers.findIndex(h => h.trim().toLowerCase() === 'teamname');
-    const targetRowIndex = rows.findIndex((row, i) => i > 0 && (row[teamNameCol] || '').trim() === teamName.trim());
+    // Normalize header detection: accept "TeamName" and "Team Name"
+    const headerKey = (h) => h.trim().toLowerCase().replace(/\s+/g, '');
+    const teamNameCol = headers.findIndex(h => headerKey(h) === 'teamname');
+    const norm = s => (s ?? '').toString().trim().toLowerCase();
+    let targetRowIndex = rows.findIndex((row, i) => i > 0 && norm(row[teamNameCol]) === norm(searchName));
+    // fallback: partial match if exact not found
+    if (targetRowIndex < 1) {
+      const tn = norm(searchName);
+      targetRowIndex = rows.findIndex((row, i) => i > 0 && norm(row[teamNameCol]).includes(tn) && tn.length >= 3);
+    }
     if (targetRowIndex < 1) return res.status(404).json({ error: 'Team not found' });
 
     const updates = [];
+    const headerIndexByKey = (k) => headers.findIndex(h => headerKey(h) === k.trim().toLowerCase().replace(/\s+/g,'') );
     Object.entries(fields).forEach(([key, value]) => {
-      const col = headers.findIndex(h => h.trim().toLowerCase() === key.toLowerCase());
+      const col = headerIndexByKey(key);
       if (col >= 0) {
         updates.push({
           range: `${sheetOrders}!${columnToLetter(col)}${targetRowIndex + 1}`,
@@ -480,15 +507,26 @@ async function updateTeamHandler(req, res) {
         });
       }
     });
+    // if client requested rename, update TeamName column explicitly
+    if (newTeamName && norm(newTeamName) !== norm(searchName)) {
+      if (teamNameCol >= 0) {
+        updates.push({
+          range: `${sheetOrders}!${columnToLetter(teamNameCol)}${targetRowIndex + 1}`,
+          value: newTeamName
+        });
+      }
+    }
 
-    if (!updates.length) return res.status(400).json({ error: 'No valid fields to update' });
+    if (!updates.length) {
+      return res.status(400).json({ error: 'No valid fields to update', providedKeys: Object.keys(fields), knownHeaders: headers.map(h => h.trim()) });
+    }
 
     await batchWriteValues({
       sheets, spreadsheetId,
       updates: updates.map(u => ({ range: u.range, values: [[u.value]] }))
     });
 
-    res.status(200).json({ success: true });
+    res.status(200).json({ success: true, renamed: newTeamName && norm(newTeamName) !== norm(searchName) ? { from: searchName, to: newTeamName } : null });
     cacheOrders = { data: null, ts: 0 };
   } catch (err) {
     console.error('Error in /updateTeam:', err);
