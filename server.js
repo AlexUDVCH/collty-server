@@ -4,6 +4,7 @@ const { google } = require('googleapis');
 const cors = require('cors');
 
 require('dotenv').config();
+const { randomUUID } = require('crypto');
 // --- Vectors / Qdrant + Jina embeddings setup ---
 const QDRANT_URL = process.env.QDRANT_URL;
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
@@ -1019,7 +1020,7 @@ app.post('/indexVectors', async (req, res) => {
       const vectors = emb.data.map(d => d.embedding);
 
       const points = slice.map((o, idx) => ({
-        id: `${o.timestamp || o.TeamName || 'row'}_${i + idx}`,
+        id: randomUUID(),
         vector: vectors[idx],
         payload: o
       }));
