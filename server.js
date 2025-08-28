@@ -126,8 +126,7 @@ async function embedText(text) {
     },
     body: JSON.stringify({
       input: [String(text || '')],
-      model: 'jina-embeddings-v4',
-      encoding_format: 'float'
+      model: 'jina-embeddings-v4'
     })
   });
   if (!resp.ok) {
@@ -1003,7 +1002,10 @@ app.post('/indexVectors', async (req, res) => {
           'Authorization': `Bearer ${JINA_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ input: texts, model: 'jina-embeddings-v4', encoding_format: 'float' })
+        body: JSON.stringify({
+          input: texts,
+          model: 'jina-embeddings-v4'
+        })
       });
       if (!resp.ok) {
         const t = await resp.text().catch(()=> '');
