@@ -125,7 +125,10 @@ async function embedText(text) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      input: [String(text || '')]
+      input: [String(text || '')],
+      model: 'jina-embeddings-v4',
+      task: 'retrieval.query',
+      dimensions: 2048
     })
   });
   if (!resp.ok) {
@@ -1002,7 +1005,10 @@ app.post('/indexVectors', async (req, res) => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          input: texts
+          input: texts,
+          model: 'jina-embeddings-v4',
+          task: 'retrieval.passage',
+          dimensions: 2048
         })
       });
       if (!resp.ok) {
