@@ -2,7 +2,20 @@
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
+
 require('dotenv').config();
+// --- Vectors / Qdrant + Jina embeddings setup ---
+const QDRANT_URL = process.env.QDRANT_URL;
+const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
+const JINA_API_KEY = process.env.JINA_API_KEY;
+
+// jina-embeddings-v4 outputs 2048-dim vectors
+const VECTOR_SIZE = 2048;
+const COLLECTION = 'orders';
+
+if (!QDRANT_URL || !QDRANT_API_KEY || !JINA_API_KEY) {
+  console.warn('[vectors] Missing env vars: QDRANT_URL / QDRANT_API_KEY / JINA_API_KEY');
+}
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -102,6 +115,86 @@ async function batchWriteValues({ sheets, spreadsheetId, updates, valueInputOpti
   }
 }
 
+// ------------- Jina embeddings (text → vector[2048]) -------------
+async function embedText(text) {
+  if (!JINA_API_KEY) throw new Error('JINA_API_KEY is missing');
+  const resp = await fetch('https://api.jina.ai/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${JINA_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      input: [String(text || '')],
+      model: 'jina-embeddings-v4',
+      encoding_format: 'float'
+    })
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(()=> '');
+    throw new Error(`Jina error ${resp.status}: ${t}`);
+  }
+  const json = await resp.json();
+  return json.data[0].embedding;
+}
+
+// ------------- Qdrant REST helpers -------------
+async function qdrantFetch(path, init = {}) {
+  if (!QDRANT_URL || !QDRANT_API_KEY) throw new Error('QDRANT_URL/QDRANT_API_KEY missing');
+  const url = `${QDRANT_URL}${path}`;
+  const headers = Object.assign({
+    'Authorization': `Bearer ${QDRANT_API_KEY}`,
+    'Content-Type': 'application/json'
+  }, init.headers || {});
+  const resp = await fetch(url, { ...init, headers });
+  return resp;
+}
+
+async function ensureCollection() {
+  // try get
+  try {
+    const info = await qdrantFetch(`/collections/${COLLECTION}`);
+    if (info.status === 200) return true;
+  } catch (_) {}
+  // create
+  const create = await qdrantFetch(`/collections/${COLLECTION}`, {
+    method: 'PUT',
+    body: JSON.stringify({ vectors: { size: VECTOR_SIZE, distance: 'Cosine' } })
+  });
+  if (!create.ok) {
+    const t = await create.text().catch(()=> '');
+    throw new Error(`Qdrant create failed ${create.status}: ${t}`);
+  }
+  return true;
+}
+
+async function upsertPoints(points) {
+  if (!Array.isArray(points) || !points.length) return;
+  const r = await qdrantFetch(`/collections/${COLLECTION}/points?wait=true`, {
+    method: 'PUT',
+    body: JSON.stringify({ points })
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(()=> '');
+    throw new Error(`Qdrant upsert failed ${r.status}: ${t}`);
+  }
+}
+
+async function vectorSearch(vector, limit = 50, filter = null) {
+  const body = { vector, limit };
+  if (filter) body.filter = filter;
+  const r = await qdrantFetch(`/collections/${COLLECTION}/points/search`, {
+    method: 'POST',
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(()=> '');
+    throw new Error(`Qdrant search failed ${r.status}: ${t}`);
+  }
+  const j = await r.json();
+  return j.result || [];
+}
+
 // === GET /orders (with cache) ===
 app.get('/orders', async (req, res) => {
   try {
@@ -184,6 +277,25 @@ function respondFilteredLeads(rows, req, res) {
     return matchEmail && matchPartner && matchConfirmed;
   });
   res.json(filtered);
+}
+
+function rowsToOrders(rows) {
+  if (!rows || rows.length === 0) return [];
+  const headers = rows[0].map(h => h.trim());
+  return rows.slice(1).map(row => headers.reduce((obj, key, i) => {
+    obj[key] = row[i] || '';
+    return obj;
+  }, {}));
+}
+
+function buildSearchText(order) {
+  const type = String(order.Type || '');
+  const type2 = String(order.Type2 || '');
+  const name = String(order.TeamName || '');
+  const tags = String(order.Textarea || '');
+  const ind = String(order.industrymarket_expertise || '');
+  const overview = String(order.X1Q || '');
+  return [name, type, type2, ind, tags, overview].filter(Boolean).join(' | ');
 }
 
 // === GET /keywords ===
@@ -461,7 +573,7 @@ async function updateTeamHandler(req, res) {
     return res.status(400).json({ error: 'timestamp is required' });
   }
   // optional new name to rename
-  const newTeamName = rawBody.newTeamName ?? rawBody.TeamName ?? rawBody.teamNameNew ?? rawBody.team_name_new ?? null;
+  const newTeamName = rawBody.newTeamName ?? rawBody.TeamName ?? rawBody.teamName ?? rawBody.teamNameNew ?? rawBody.team_name_new ?? null;
   // exclude known keys from fields to update
   const {
     teamName: _omitTN,
@@ -860,6 +972,82 @@ app.patch('/leads/:id', async (req, res) => {
 function safeJsonParse(str) {
   try { return JSON.parse(str); } catch (e) { return []; }
 }
+
+// === POST /indexVectors ===
+// One-shot (or periodic) indexing: pulls all orders from Sheets and stores embeddings in Qdrant
+app.post('/indexVectors', async (req, res) => {
+  try {
+    if (!QDRANT_URL || !QDRANT_API_KEY || !JINA_API_KEY) {
+      return res.status(500).json({ error: 'Vector env vars are not set' });
+    }
+    // load orders from Sheets
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+    const rows = await fetchSheetWithRetry(sheets, `${sheetOrders}!A1:ZZ1000`);
+    const orders = rowsToOrders(rows);
+
+    // ensure collection exists
+    await ensureCollection();
+
+    const BATCH = 64;
+    let upserted = 0;
+    for (let i = 0; i < orders.length; i += BATCH) {
+      const slice = orders.slice(i, i + BATCH);
+      const texts = slice.map(buildSearchText);
+
+      // batch embed
+      const resp = await fetch('https://api.jina.ai/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${JINA_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ input: texts, model: 'jina-embeddings-v4', encoding_format: 'float' })
+      });
+      if (!resp.ok) {
+        const t = await resp.text().catch(()=> '');
+        throw new Error(`Jina batch error ${resp.status}: ${t}`);
+      }
+      const emb = await resp.json();
+      const vectors = emb.data.map(d => d.embedding);
+
+      const points = slice.map((o, idx) => ({
+        id: `${o.timestamp || o.TeamName || 'row'}_${i + idx}`,
+        vector: vectors[idx],
+        payload: o
+      }));
+
+      await upsertPoints(points);
+      upserted += points.length;
+    }
+
+    res.json({ ok: true, upserted });
+  } catch (e) {
+    console.error('indexVectors error:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// === POST /search ===
+// Body: { q: string, limit?: number }
+app.post('/search', async (req, res) => {
+  try {
+    const q = String(req.body.q || '').trim();
+    const limit = Math.min(Number(req.body.limit || 50), 100);
+    if (!q) return res.status(400).json({ error: 'empty query' });
+
+    await ensureCollection();
+    const vec = await embedText(q);
+    const hits = await vectorSearch(vec, limit);
+
+    const items = (hits || []).map(h => h.payload).filter(Boolean);
+    res.json(items);
+  } catch (e) {
+    console.error('search error:', e);
+    res.status(500).json({ error: 'search failed' });
+  }
+});
 
 app.use((req, res) => {
   console.warn('[404]', req.method, req.originalUrl);
