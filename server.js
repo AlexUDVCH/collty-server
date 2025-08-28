@@ -125,8 +125,7 @@ async function embedText(text) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      input: [String(text || '')],
-      model: 'jina-embeddings-v4'
+      input: [String(text || '')]
     })
   });
   if (!resp.ok) {
@@ -1003,8 +1002,7 @@ app.post('/indexVectors', async (req, res) => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          input: texts,
-          model: 'jina-embeddings-v4'
+          input: texts
         })
       });
       if (!resp.ok) {
