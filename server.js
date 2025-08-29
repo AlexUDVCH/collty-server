@@ -1042,6 +1042,45 @@ function safeJsonParse(str) {
   try { return JSON.parse(str); } catch (e) { return []; }
 }
 
+// -------- Query normalization and lightweight keyword features (for hybrid re-rank) --------
+const STOPWORDS = new Set(['i','me','my','we','our','need','want','a','an','the','team','for','to','please','looking','search','find','build','hire']);
+function normalizeQuery(q) {
+  const base = String(q || '').toLowerCase()
+    .replace(/\bci\/cd\b/g, 'ci cd')   // unify CI/CD
+    .replace(/\bcicd\b/g, 'ci cd')     // unify cicd
+    .replace(/[-_]+/g, ' ');
+  const toks = base.split(/[^a-z0-9]+/).filter(Boolean);
+  const filtered = toks.filter(t => !STOPWORDS.has(t));
+  return filtered.join(' ').trim() || base.trim() || String(q || '').trim();
+}
+function _tokens(s){ return String(s||'').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean); }
+function _csvParts(s){ return String(s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+function _acronym(s){
+  return String(s||'').split(/[^a-z0-9]+/i).filter(Boolean).map(w=>w[0]).join('').toUpperCase();
+}
+function keywordFeatures(order, qCoreTokens) {
+  const typeParts  = _csvParts(order.Type);
+  const type2Parts = _csvParts(order.Type2);
+  const allText = [
+    order.TeamName, order.Type, order.Type2, order.Textarea,
+    order.X1Q, order.industrymarket_expertise,
+    order.spcv1,order.spcv2,order.spcv3,order.spcv4,order.spcv5,
+    order.spcv6,order.spcv7,order.spcv8,order.spcv9,order.spcv10
+  ].map(x=>String(x||'').toLowerCase()).join(' ');
+  const qSet = new Set(qCoreTokens);
+  const textTokens = new Set(_tokens(allText));
+  // direct hits in Type / Type2
+  const typeHit  = typeParts.some(t => qSet.has(String(t||'').toLowerCase()));
+  const type2Hit = type2Parts.some(t => qSet.has(String(t||'').toLowerCase()));
+  // text overlap count
+  let overlap = 0;
+  qSet.forEach(t => { if (textTokens.has(t)) overlap++; });
+  // acronym match (PR/SMM/CI/CD)
+  const acrQ = _acronym([...qSet].join(' '));
+  const hasAcr = acrQ && (typeParts.concat(type2Parts).some(t => _acronym(t) === acrQ));
+  return { typeHit, type2Hit, overlap, hasAcr };
+}
+
 // === POST /indexVectors ===
 // One-shot (or periodic) indexing: pulls all orders from Sheets and stores embeddings in Qdrant
 app.post('/indexVectors', async (req, res) => {
@@ -1108,7 +1147,8 @@ app.post('/indexVectors', async (req, res) => {
 // Body: { q: string, limit?: number }
 app.post('/search', async (req, res) => {
   try {
-    const q = String(req.body.q || '').trim();
+    const rawQ = String(req.body.q || '').trim();
+    const q = normalizeQuery(rawQ);
     const limit = Math.min(Number(req.body.limit || 50), 100);
     if (!q) return res.status(400).json({ error: 'empty query' });
 
@@ -1134,14 +1174,37 @@ app.post('/search', async (req, res) => {
       items = Array.from(map.values());
     }
 
+    // --- Hybrid re-rank (VSS cosine + lightweight keyword/field boosts) ---
+    {
+      const qn = String(q).toLowerCase();
+      const qTokens = qn.split(/[^a-z0-9]+/).filter(Boolean);
+      for (const it of items) {
+        const feat = keywordFeatures(it, qTokens);
+        let final = (typeof it.__score === 'number' ? it.__score : 0);
+
+        // Strong preference for exact tag hits
+        if (feat.typeHit)  final += 0.30;
+        if (feat.type2Hit) final += 0.15;
+
+        // Small bonus for textual overlap in long fields (up to 3 tokens)
+        final += Math.min(feat.overlap, 3) * 0.06;
+
+        // Acronym-friendly nudge (PR, SMM, CICD...)
+        if (feat.hasAcr) final += 0.08;
+
+        // Guardrail: penalize items with zero overlap and no tag hits
+        if (!feat.typeHit && !feat.type2Hit && feat.overlap === 0) final -= 0.10;
+
+        // Social-proof micro-boost
+        if (String(it.Partner_confirmation||'').trim()) final += 0.03;
+
+        it.__score = final;
+      }
+    }
+
     // --- Intent-aware re-rank: prefer items whose Type/Type2/Tags contain query keywords ---
     const qn = String(q).toLowerCase();
-    // Normalize common separators and variants
-    const qTokens = qn
-      .replace(/\//g, ' ') // CI/CD -> CI CD
-      .replace(/[-_]+/g, ' ')
-      .split(/[^a-z0-9]+/)
-      .filter(Boolean);
+    const qTokens = qn.split(/[^a-z0-9]+/).filter(Boolean);
     const qSet = new Set(qTokens);
 
     // Precompute preferred keywords for known intents (kept tiny & safe)
