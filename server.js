@@ -4,7 +4,7 @@ const { google } = require('googleapis');
 const cors = require('cors');
 
 require('dotenv').config();
-const { randomUUID } = require('crypto');
+const { randomUUID, createHash } = require('crypto');
 // --- Vectors / Qdrant + Jina embeddings setup ---
 const QDRANT_URL = process.env.QDRANT_URL;
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
@@ -288,6 +288,18 @@ function rowsToOrders(rows) {
     obj[key] = row[i] || '';
     return obj;
   }, {}));
+}
+
+// --- Stable identity helpers to avoid duplicate vector points and to deduplicate search hits ---
+function stableKeyFromOrder(o) {
+  const S = v => String(v || '').trim().toLowerCase();
+  // Use a combination that is stable in your sheet
+  return [S(o.timestamp), S(o.TeamName), S(o.Type), S(o.Type2), S(o.partner)].join('|');
+}
+function stableIdForOrder(o) {
+  // 32-hex id derived from the stable key
+  const key = stableKeyFromOrder(o);
+  return createHash('sha256').update(key).digest('hex').slice(0, 32);
 }
 
 function buildSearchText(order) {
@@ -1075,7 +1087,8 @@ app.post('/indexVectors', async (req, res) => {
       const vectors = emb.data.map(d => d.embedding);
 
       const points = slice.map((o, idx) => ({
-        id: randomUUID(),
+        // Deterministic ID: reindexing will overwrite, not create duplicates
+        id: stableIdForOrder(o),
         vector: vectors[idx],
         payload: o
       }));
@@ -1107,6 +1120,19 @@ app.post('/search', async (req, res) => {
     let items = (hits || [])
       .map(h => ({ ...(h.payload || {}), __score: (typeof h.score === 'number' ? h.score : 0) }))
       .filter(obj => Object.keys(obj).length > 0);
+
+    // Deduplicate by stable key (same team may have multiple vector points from previous runs)
+    {
+      const map = new Map();
+      for (const it of items) {
+        const k = stableKeyFromOrder(it);
+        const prev = map.get(k);
+        if (!prev || (it.__score || 0) > (prev.__score || 0)) {
+          map.set(k, it);
+        }
+      }
+      items = Array.from(map.values());
+    }
 
     // --- Intent-aware re-rank: prefer items whose Type/Type2/Tags contain query keywords ---
     const qn = String(q).toLowerCase();
