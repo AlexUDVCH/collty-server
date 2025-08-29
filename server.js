@@ -1042,7 +1042,6 @@ function safeJsonParse(str) {
   try { return JSON.parse(str); } catch (e) { return []; }
 }
 
-// -------- Query normalization and lightweight keyword features (for hybrid re-rank) --------
 const STOPWORDS = new Set(['i','me','my','we','our','need','want','a','an','the','team','for','to','please','looking','search','find','build','hire']);
 function normalizeQuery(q) {
   const base = String(q || '').toLowerCase()
@@ -1079,6 +1078,13 @@ function keywordFeatures(order, qCoreTokens) {
   const acrQ = _acronym([...qSet].join(' '));
   const hasAcr = acrQ && (typeParts.concat(type2Parts).some(t => _acronym(t) === acrQ));
   return { typeHit, type2Hit, overlap, hasAcr };
+}
+
+// Anchor intent helpers (to strictly prefer canonical tags when user asks for them)
+function hasTag(order, term){
+  const termLc = String(term || '').toLowerCase();
+  const set = new Set(_csvParts(order.Type).concat(_csvParts(order.Type2)).map(s => String(s||'').trim().toLowerCase()));
+  return set.has(termLc);
 }
 
 // === POST /indexVectors ===
@@ -1197,6 +1203,26 @@ app.post('/search', async (req, res) => {
 
         // Social-proof micro-boost
         if (String(it.Partner_confirmation||'').trim()) final += 0.03;
+
+        // --- Anchor-intent: if the query clearly asks for SEO/PR/CI/CD, punish items without that tag in Type/Type2 ---
+        const wantSEO  = qTokens.includes('seo');
+        const wantPR   = qTokens.includes('pr') || qn.includes('public relations');
+        const wantCICD = qn.includes('ci/cd') || qn.includes('ci cd') || qn.includes('cicd') ||
+                         (qTokens.includes('ci') && qTokens.includes('cd'));
+
+        if (wantSEO) {
+          const seoHit = hasTag(it,'seo') || hasTag(it,'technical seo') || hasTag(it,'on-page seo') ||
+                         hasTag(it,'link building') || hasTag(it,'content seo');
+          if (seoHit) final += 0.12; else final -= 0.22;
+        }
+        if (wantPR) {
+          const prHit = hasTag(it,'pr') || hasTag(it,'public relations') || hasTag(it,'media relations');
+          if (prHit) final += 0.10; else final -= 0.18;
+        }
+        if (wantCICD) {
+          const cicdHit = hasTag(it,'ci/cd') || hasTag(it,'ci cd') || hasTag(it,'cicd') || hasTag(it,'ci') || hasTag(it,'cd');
+          if (cicdHit) final += 0.10; else final -= 0.18;
+        }
 
         it.__score = final;
       }
