@@ -291,13 +291,68 @@ function rowsToOrders(rows) {
 }
 
 function buildSearchText(order) {
-  const type = String(order.Type || '');
-  const type2 = String(order.Type2 || '');
-  const name = String(order.TeamName || '');
-  const tags = String(order.Textarea || '');
-  const ind = String(order.industrymarket_expertise || '');
-  const overview = String(order.X1Q || '');
-  return [name, type, type2, ind, tags, overview].filter(Boolean).join(' | ');
+  const S = v => String(v || '').trim();
+
+  // Core fields
+  const name = S(order.TeamName);
+  const type = S(order.Type);
+  const type2 = S(order.Type2);
+  const tags = S(order.Textarea); // free-form tags/keywords
+  const industry = S(order.industrymarket_expertise);
+  const overview = S(order.X1Q);
+  const status1 = S(order.Status1);
+  const status2 = S(order.Status2);
+  const partners = S(order.Partner_confirmation);
+
+  // Derive short acronyms from Type/Type2 (PR, SMM, CI/CD -> CICD -> CI/CD etc.)
+  const acronymOf = (str) => S(str)
+    .split(/[^a-z0-9]+/i)
+    .filter(Boolean)
+    .map(w => w[0])
+    .join('')
+    .toUpperCase();
+  const typeAcr = acronymOf(type);
+  const type2Acr = acronymOf(type2);
+
+  // Specialists & CV snippets (sp1..sp10, spcv1..spcv10)
+  const specialists = [];
+  for (let i = 1; i <= 10; i++) {
+    specialists.push(S(order[`sp${i}`]));
+    specialists.push(S(order[`spcv${i}`]));
+  }
+
+  // Extra context
+  const projectId = S(order.projectid);
+  const brief = S(order.Brief);
+  const docs = S(order.Documents);
+  const nda = S(order.nda);
+
+  // Weighting: repeat highly-informative fields to bias embedding similarity
+  const strong = [type, type2].filter(Boolean).join(' | ');
+  const strongBoost = [strong, strong, strong].filter(Boolean).join(' | '); // 3x boost for Type/Type2
+
+  const soft = [tags, industry, overview].filter(Boolean).join(' | ');
+
+  // Include acronyms only if they look meaningful (2-5 chars). Also normalize CI/CD forms.
+  const acrsRaw = [typeAcr, type2Acr]
+    .filter(a => a && a.length >= 2 && a.length <= 5);
+  const acrs = acrsRaw
+    .map(a => a.replace(/\//g, '')) // CI/CD -> CICD
+    .join(' ');
+
+  return [
+    name,
+    strongBoost,            // boosted Type/Type2
+    acrs,                   // PR / SMM / CI / CICD
+    soft,                   // tags + industry + overview
+    status1, status2,
+    partners,
+    specialists.join(' | '),
+    projectId,
+    brief, docs, nda,
+  ]
+    .filter(Boolean)
+    .join(' | ');
 }
 
 // === GET /keywords ===
@@ -1048,10 +1103,47 @@ app.post('/search', async (req, res) => {
     const vec = await embedText(q);
     const hits = await vectorSearch(vec, limit);
 
-    const items = (hits || [])
+    // Map results and keep semantic score
+    let items = (hits || [])
       .map(h => ({ ...(h.payload || {}), __score: (typeof h.score === 'number' ? h.score : 0) }))
-      .filter(obj => Object.keys(obj).length > 0)
-      .sort((a,b) => (b.__score || 0) - (a.__score || 0));
+      .filter(obj => Object.keys(obj).length > 0);
+
+    // --- Intent-aware re-rank: prefer items whose Type/Type2/Tags contain query keywords ---
+    const qn = String(q).toLowerCase();
+    // Normalize common separators and variants
+    const qTokens = qn
+      .replace(/\//g, ' ') // CI/CD -> CI CD
+      .replace(/[-_]+/g, ' ')
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+    const qSet = new Set(qTokens);
+
+    // Precompute preferred keywords for known intents (kept tiny & safe)
+    const prefers = [];
+    if (qSet.has('ci') || qn.includes('ci/cd') || qn.includes('ci cd') || qn.includes('cicd') || qn.includes('pipeline')) {
+      prefers.push('ci', 'cicd', 'ci/cd', 'pipeline', 'monorepo', 'github actions', 'gitlab', 'jenkins', 'circleci');
+    }
+    if (qSet.has('pr') || qn.includes('public relations')) {
+      prefers.push('pr', 'public relations', 'media relations');
+    }
+    if (qSet.has('marketing') || qn.includes('strategy')) {
+      prefers.push('marketing', 'digital strategy', 'content', 'seo', 'brand strategy', 'go-to-market');
+    }
+
+    if (prefers.length) {
+      const prefsLc = prefers.map(s => s.toLowerCase());
+      items = items.map(it => {
+        const t1 = String(it.Type || '').toLowerCase();
+        const t2 = String(it.Type2 || '').toLowerCase();
+        const tg = String(it.Textarea || '').toLowerCase();
+        const hasPref = prefsLc.some(p => t1.includes(p) || t2.includes(p) || tg.includes(p));
+        // gentle boost (not override semantics entirely)
+        const boost = hasPref ? 0.15 : 0;
+        return { ...it, __score: (it.__score || 0) + boost };
+      });
+    }
+
+    items.sort((a,b) => (b.__score || 0) - (a.__score || 0));
     res.json(items);
   } catch (e) {
     console.error('search error:', e);
