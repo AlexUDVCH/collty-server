@@ -183,7 +183,7 @@ async function upsertPoints(points) {
 }
 
 async function vectorSearch(vector, limit = 50, filter = null) {
-  const body = { vector, limit };
+  const body = { vector, limit, with_payload: true };
   if (filter) body.filter = filter;
   const r = await qdrantFetch(`/collections/${COLLECTION}/points/search`, {
     method: 'POST',
@@ -1048,7 +1048,10 @@ app.post('/search', async (req, res) => {
     const vec = await embedText(q);
     const hits = await vectorSearch(vec, limit);
 
-    const items = (hits || []).map(h => h.payload).filter(Boolean);
+    const items = (hits || [])
+      .map(h => ({ ...(h.payload || {}), __score: (typeof h.score === 'number' ? h.score : 0) }))
+      .filter(obj => Object.keys(obj).length > 0)
+      .sort((a,b) => (b.__score || 0) - (a.__score || 0));
     res.json(items);
   } catch (e) {
     console.error('search error:', e);
