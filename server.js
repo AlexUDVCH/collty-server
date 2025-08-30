@@ -1305,6 +1305,126 @@ app.post('/search', async (req, res) => {
   }
 });
 
+// === POST /searchPaged ===
+// Body: { q: string, limit?: number (<=50), cursor?: string(JSON) }
+app.post('/searchPaged', async (req, res) => {
+  try {
+    const rawQ = String(req.body.q || '').trim();
+    const q = normalizeQuery(rawQ);
+    const pageSizeReq = Number(req.body.limit || req.body.page_size || 50);
+    const PAGE_SIZE = Math.min(Math.max(pageSizeReq || 50, 1), 50); // hard-cap 50
+
+    let cursorObj = null;
+    if (typeof req.body.cursor === 'string' && req.body.cursor) {
+      try { cursorObj = JSON.parse(req.body.cursor); } catch(_) { cursorObj = null; }
+    }
+    const page = Math.max(1, Number(cursorObj?.page || 1));
+
+    if (!q) return res.status(400).json({ error: 'empty query' });
+
+    await ensureCollection();
+    const vec = await embedText(q);
+
+    // Candidate pool grows with page to keep global order stable after re-rank
+    const candidatesK = Math.min(1000, page * PAGE_SIZE * 2);
+    const hits = await vectorSearch(vec, candidatesK);
+
+    // Map & dedupe by stable key
+    let items = (hits || [])
+      .map(h => ({ ...(h.payload || {}), __score: (typeof h.score === 'number' ? h.score : 0) }))
+      .filter(obj => Object.keys(obj).length > 0);
+    {
+      const map = new Map();
+      for (const it of items) {
+        const k = stableKeyFromOrder(it);
+        const prev = map.get(k);
+        if (!prev || (it.__score || 0) > (prev.__score || 0)) {
+          map.set(k, it);
+        }
+      }
+      items = Array.from(map.values());
+    }
+
+    // ---- Hybrid re-rank (same logic as /search) ----
+    {
+      const qn = String(q).toLowerCase();
+      const qTokens = qn.split(/[^a-z0-9]+/).filter(Boolean);
+      for (const it of items) {
+        const feat = keywordFeatures(it, qTokens);
+        let final = (typeof it.__score === 'number' ? it.__score : 0);
+        if (feat.typeHit)  final += 0.30;
+        if (feat.type2Hit) final += 0.15;
+        final += Math.min(feat.overlap, 3) * 0.06;
+        if (feat.hasAcr) final += 0.08;
+        if (!feat.typeHit && !feat.type2Hit && feat.overlap === 0) final -= 0.10;
+        if (String(it.Partner_confirmation||'').trim()) final += 0.03;
+
+        const wantSEO  = qTokens.includes('seo') || qn.includes('technical seo');
+        const wantPR   = qTokens.includes('pr') || qn.includes('public relations');
+        const wantCICD = qn.includes('ci/cd') || qn.includes('ci cd') || qn.includes('cicd') ||
+                         (qTokens.includes('ci') && qTokens.includes('cd'));
+        if (wantSEO) {
+          const seoHit = hasTag(it,'seo') || hasTag(it,'technical seo') || hasTag(it,'on-page seo') ||
+                         hasTag(it,'link building') || hasTag(it,'content seo');
+          if (seoHit) final += 0.12; else final -= 0.22;
+        }
+        if (wantPR) {
+          const prHit = hasTag(it,'pr') || hasTag(it,'public relations') || hasTag(it,'media relations');
+          if (prHit) final += 0.10; else final -= 0.18;
+        }
+        if (wantCICD) {
+          const cicdHit = hasTag(it,'ci/cd') || hasTag(it,'ci cd') || hasTag(it,'cicd') || hasTag(it,'ci') || hasTag(it,'cd');
+          if (cicdHit) final += 0.10; else final -= 0.18;
+        }
+        it.__score = final;
+      }
+    }
+
+    // Intent-aware gentle preference (same as /search)
+    {
+      const qn = String(q).toLowerCase();
+      const qTokens = qn.split(/[^a-z0-9]+/).filter(Boolean);
+      const qSet = new Set(qTokens);
+      const prefers = [];
+      if (qSet.has('ci') || qn.includes('ci/cd') || qn.includes('ci cd') || qn.includes('cicd') || qn.includes('pipeline')) {
+        prefers.push('ci', 'cicd', 'ci/cd', 'pipeline', 'monorepo', 'github actions', 'gitlab', 'jenkins', 'circleci');
+      }
+      if (qSet.has('pr') || qn.includes('public relations')) {
+        prefers.push('pr', 'public relations', 'media relations');
+      }
+      if (qSet.has('marketing') || qn.includes('strategy')) {
+        prefers.push('marketing', 'digital strategy', 'content', 'seo', 'brand strategy', 'go-to-market');
+      }
+      if (prefers.length) {
+        const prefsLc = prefers.map(s => s.toLowerCase());
+        items = items.map(it => {
+          const t1 = String(it.Type || '').toLowerCase();
+          const t2 = String(it.Type2 || '').toLowerCase();
+          const tg = String(it.Textarea || '').toLowerCase();
+          const hasPref = prefsLc.some(p => t1.includes(p) || t2.includes(p) || tg.includes(p));
+          const boost = hasPref ? 0.15 : 0;
+          return { ...it, __score: (it.__score || 0) + boost };
+        });
+      }
+    }
+
+    // Stable sort with tie-breaker
+    items.sort((a,b) => (b.__score || 0) - (a.__score || 0) || (stableIdForOrder(a) > stableIdForOrder(b) ? 1 : -1));
+
+    const total = items.length;
+    const start = (page - 1) * PAGE_SIZE;
+    const end = Math.min(page * PAGE_SIZE, total);
+    const slice = start < end ? items.slice(start, end) : [];
+    const hasMore = end < total;
+    const next_cursor = hasMore ? JSON.stringify({ page: page + 1 }) : null;
+
+    return res.json({ items: slice, next_cursor, total_estimate: total });
+  } catch (e) {
+    console.error('searchPaged error:', e);
+    res.status(500).json({ error: 'searchPaged failed' });
+  }
+});
+
 app.use((req, res) => {
   console.warn('[404]', req.method, req.originalUrl);
   res.status(404).send('Not Found');
