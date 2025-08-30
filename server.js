@@ -197,6 +197,22 @@ async function vectorSearch(vector, limit = 50, filter = null) {
   return j.result || [];
 }
 
+// --- Exact CSV tag matching helpers (for /orders strict tag search) ---
+const _normExact = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const _splitCSVExact = s => String(s || '').split(',').map(t => t.trim()).filter(Boolean);
+const _acronymExact = s => String(s || '')
+  .split(/[^a-z0-9]+/i).filter(Boolean).map(w => w[0]).join('').toUpperCase();
+
+function csvHasTagExact(csv, wanted) {
+  const w = _normExact(wanted);
+  return _splitCSVExact(csv).some(tag => _normExact(tag) === w);
+}
+function csvHasAcronym(csv, wanted) {
+  const W = String(wanted || '').toUpperCase();
+  if (!W) return false;
+  return _splitCSVExact(csv).some(tag => _acronymExact(tag) === W);
+}
+
 // === GET /orders (with cache) ===
 app.get('/orders', async (req, res) => {
   try {
@@ -222,20 +238,43 @@ function respondFilteredOrders(rows, req, res) {
     obj[key] = row[i] || '';
     return obj;
   }, {}));
+
   const emailQuery = (req.query.email || '').toLowerCase().trim();
-  const typeQuery = (req.query.type || '').toLowerCase().trim();
-  const type2Query = (req.query.type2 || '').toLowerCase().trim();
+
+  // Take raw query strings (do NOT pre-lowercase or split by arbitrary chars).
+  const typeRaw  = String(req.query.type  || '').trim();
+  const type2Raw = String(req.query.type2 || '').trim();
+
   const confirmed = req.query.confirmed === 'true';
-  const typeTerms = typeQuery.split(/[+,]/).map(t => t.trim()).filter(Boolean);
+
+  // Support multiple tags in `type` query via CSV: ?type=SEO,PR
+  const qTypes = _splitCSVExact(typeRaw);   // ["SEO","PR"] etc.
+
   const filtered = data.filter(row => {
-    const email = (row.Email || '').toLowerCase();
-    const type = (row.Type || '').toLowerCase();
-    const type2 = (row.Type2 || '').toLowerCase();
-    const textarea = (row.Textarea || '').toLowerCase();
+    const email  = String(row.Email || '').toLowerCase();
+    const type   = String(row.Type  || '');
+    const type2  = String(row.Type2 || '');
+    const text   = String(row.Textarea || '').toLowerCase();
+
     const matchEmail = emailQuery ? email.includes(emailQuery) : true;
-    const matchType = typeTerms.length ? typeTerms.every(term => type.includes(term) || type2.includes(term)) : true;
-    const matchType2 = type2Query ? type2.includes(type2Query) : true;
-    const matchConfirmed = confirmed ? textarea.includes('confirmed') : true;
+
+    // For `type`: strict CSV tag equality on Type OR (optionally) acronym equality
+    const matchType = qTypes.length
+      ? qTypes.some(qt =>
+          csvHasTagExact(type, qt)  ||
+          csvHasAcronym(type, qt)   ||
+          csvHasTagExact(type2, qt) ||   // keep backward-compatible behavior (Type or Type2)
+          csvHasAcronym(type2, qt)
+        )
+      : true;
+
+    // For `type2`: strict CSV tag equality only against Type2 (plus acronym)
+    const matchType2 = type2Raw
+      ? (csvHasTagExact(type2, type2Raw) || csvHasAcronym(type2, type2Raw))
+      : true;
+
+    const matchConfirmed = confirmed ? text.includes('confirmed') : true;
+
     return matchEmail && matchType && matchType2 && matchConfirmed;
   });
   res.json(filtered);
