@@ -277,7 +277,8 @@ function respondFilteredOrders(rows, req, res) {
 
     return matchEmail && matchType && matchType2 && matchConfirmed;
   });
-  res.json(filtered);
+  const deduped = dedupeByTeamName(filtered);
+  res.json(deduped);
 }
 
 // === GET /leads (with cache) ===
@@ -327,6 +328,21 @@ function rowsToOrders(rows) {
     obj[key] = row[i] || '';
     return obj;
   }, {}));
+}
+
+function uniq(arr){ return Array.from(new Set(arr)); }
+
+function dedupeByTeamName(items){
+  const seen = new Set();
+  const out = [];
+  for (const it of items){
+    const key = String(it.TeamName || '').trim().toLowerCase();
+    if (!key) { out.push(it); continue; } // keep items without TeamName untouched
+    if (seen.has(key)) continue;          // skip duplicates
+    seen.add(key);
+    out.push(it);
+  }
+  return out;
 }
 
 // --- Stable identity helpers to avoid duplicate vector points and to deduplicate search hits ---
