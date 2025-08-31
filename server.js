@@ -1191,6 +1191,67 @@ app.patch('/leads/:id', async (req, res) => {
   }
 });
 
+// --- Exact-phrase helpers (to prioritize exact matches in TeamName / Type / Type2 / Textarea) ---
+function escapeRegExp(s){ return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Extract meaningful multi-word phrases directly from the raw query (without over-normalizing).
+// Example: "i need business strategy" -> ["business strategy"]
+function extractExactPhrases(rawQ){
+  const raw = String(rawQ || '').toLowerCase();
+  // Replace separators with a single space, keep words
+  const tokens = raw.split(/[^a-z0-9]+/).filter(Boolean);
+  // Remove trivial words to avoid phrases like "i need"
+  const stop = new Set(['i','me','my','we','our','need','want','a','an','the','team','for','to','please','looking','search','find','build','hire']);
+  const filtered = tokens.filter(t => !stop.has(t));
+  const phrases = new Set();
+
+  // Collect contiguous bigrams and trigrams as candidate phrases
+  for (let i = 0; i < filtered.length; i++){
+    const one = filtered[i];
+    const two = filtered[i+1];
+    const three = filtered[i+2];
+
+    if (two) phrases.add(`${one} ${two}`);
+    if (two && three) phrases.add(`${one} ${two} ${three}`);
+  }
+
+  // Also include any quoted substrings from the raw query as-is
+  const quoted = raw.match(/"([^"]+)"/g) || [];
+  quoted.forEach(q => {
+    const inner = q.slice(1, -1).trim();
+    if (inner.split(/\s+/).length >= 2) phrases.add(inner.toLowerCase());
+  });
+
+  // Return only phrases of at least 2 words
+  return Array.from(phrases).filter(p => p.split(/\s+/).length >= 2);
+}
+
+// Compute exact-phrase boost based on presence in Type/Type2 (as CSV tags) and in TeamName / Textarea.
+function phraseBoostForItem(item, phrases){
+  if (!phrases || !phrases.length) return 0;
+  const team = String(item.TeamName || '').toLowerCase();
+  const tagsCsv = String(item.Textarea || '');
+  const typeCsv = String(item.Type || '');
+  const type2Csv = String(item.Type2 || '');
+  let boost = 0;
+
+  for (const p of phrases){
+    const pLc = String(p).toLowerCase();
+    const re = new RegExp(`\\b${escapeRegExp(pLc)}\\b`, 'i');
+
+    // Strongest: exact CSV tag match in Type / Type2
+    if (csvHasTagExact(typeCsv, pLc) || csvHasTagExact(type2Csv, pLc)) boost += 0.35;
+
+    // Medium: exact phrase in TeamName
+    if (re.test(team)) boost += 0.20;
+
+    // Light: exact phrase in free-form tags/keywords (Textarea)
+    if (re.test(String(tagsCsv).toLowerCase())) boost += 0.10;
+  }
+
+  // Cap total phrase-derived boost to keep ranking stable
+  return Math.min(boost, 0.60);
+}
 // Utility для безопасного парсинга JSON:
 function safeJsonParse(str) {
   try { return JSON.parse(str); } catch (e) { return []; }
@@ -1311,6 +1372,7 @@ app.post('/search', async (req, res) => {
   try {
     const rawQ = String(req.body.q || '').trim();
     const q = normalizeQuery(rawQ);
+    const exactPhrases = extractExactPhrases(rawQ);
     const limit = Math.min(Number(req.body.limit || 50), 100);
     // Be lenient on first-load / empty submissions: return empty list instead of 400
     if (!q) return res.status(200).json([]);
@@ -1375,6 +1437,9 @@ app.post('/search', async (req, res) => {
           if (cicdHit) final += 0.10; else final -= 0.18;
         }
 
+        // Exact-phrase priority (e.g., "business strategy")
+        final += phraseBoostForItem(it, exactPhrases);
+
         it.__score = final;
       }
     }
@@ -1422,6 +1487,7 @@ app.get('/search', async (req, res) => {
   try {
     const rawQ = String(req.query.q || '').trim();
     const q = normalizeQuery(rawQ);
+    const exactPhrases = extractExactPhrases(rawQ);
     const limit = Math.min(Number(req.query.limit || 50), 100);
     if (!q) return res.status(200).json([]);
     if (!vectorsEnabled()) {
@@ -1470,6 +1536,8 @@ app.get('/search', async (req, res) => {
           const cicdHit = hasTag(it,'ci/cd') || hasTag(it,'ci cd') || hasTag(it,'cicd') || hasTag(it,'ci') || hasTag(it,'cd');
           if (cicdHit) final += 0.10; else final -= 0.18;
         }
+        // Exact-phrase priority
+        final += phraseBoostForItem(it, exactPhrases);
         it.__score = final;
       }
     }
@@ -1515,6 +1583,7 @@ app.post('/searchPaged', async (req, res) => {
   try {
     const rawQ = String(req.body.q || '').trim();
     const q = normalizeQuery(rawQ);
+    const exactPhrases = extractExactPhrases(rawQ);
     const pageSizeReq = Number(req.body.limit || req.body.page_size || 50);
     const PAGE_SIZE = Math.min(Math.max(pageSizeReq || 50, 1), 50); // hard-cap 50
 
@@ -1575,6 +1644,8 @@ app.post('/searchPaged', async (req, res) => {
           const cicdHit = hasTag(it,'ci/cd') || hasTag(it,'ci cd') || hasTag(it,'cicd') || hasTag(it,'ci') || hasTag(it,'cd');
           if (cicdHit) final += 0.10; else final -= 0.18;
         }
+        // Exact-phrase priority
+        final += phraseBoostForItem(it, exactPhrases);
         it.__score = final;
       }
     }
