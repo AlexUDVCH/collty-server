@@ -541,7 +541,8 @@ app.get('/keywords', async (req, res) => {
     res.json({ type: Array.from(type), type2: Array.from(type2) });
   } catch (err) {
     console.error('Error in /keywords:', err);
-    res.status(500).json({ error: 'Failed to load keywords' });
+    // Be lenient on first-load: don't fail the UI because keywords are not critical
+    res.status(200).json({ type: [], type2: [] });
   }
 });
 
