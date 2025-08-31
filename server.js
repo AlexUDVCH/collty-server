@@ -1171,12 +1171,13 @@ app.post('/indexVectors', async (req, res) => {
       const vectors = emb.data.map(d => d.embedding);
 
       const points = slice.map((o, idx) => ({
-        // Deterministic ID: reindexing will overwrite, not create duplicates
         id: stableIdForOrder(o),
         vector: vectors[idx],
         payload: o
       }));
 
+      // Remove any legacy points for these TeamNames (from prior runs with non-deterministic IDs), then upsert
+      try { await deletePointsByTeamNames(slice.map(o => o.TeamName)); } catch (_) {}
       await upsertPoints(points);
       upserted += points.length;
     }
