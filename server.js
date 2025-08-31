@@ -19,6 +19,14 @@ if (!QDRANT_URL || !QDRANT_API_KEY || !JINA_API_KEY) {
 }
 
 const app = express();
+// Disable etag/304 and force no-store to avoid empty 304 bodies confusing the client
+app.set('etag', false);
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
 const port = process.env.PORT || 3000;
 
 const path = '/etc/secrets/credentials.json';
@@ -280,6 +288,80 @@ function respondFilteredOrders(rows, req, res) {
   const deduped = dedupeByTeamName(filtered);
   res.json(deduped);
 }
+
+// === GET /ordersPaged (same filters as /orders; dedup + page-cursor pagination) ===
+app.get('/ordersPaged', async (req, res) => {
+  try {
+    // Load rows with cache (same as /orders)
+    const getRows = async () => {
+      if (cacheOrders.data && now() - cacheOrders.ts < CACHE_TTL) return cacheOrders.data;
+      const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
+      const client = await auth.getClient();
+      const sheets = google.sheets({ version: 'v4', auth: client });
+      const rows = await fetchSheetWithRetry(sheets, `${sheetOrders}!A1:ZZ1000`);
+      cacheOrders = { data: rows, ts: now() };
+      return rows;
+    };
+
+    // Page-based cursor (like /searchPaged)
+    const rawLimit = Number(req.query.limit || req.query.page_size || 50);
+    const PAGE_SIZE = Math.min(Math.max(rawLimit || 50, 1), 50); // hard-cap 50
+
+    let cursorObj = null;
+    if (typeof req.query.cursor === 'string' && req.query.cursor) {
+      try { cursorObj = JSON.parse(req.query.cursor); } catch(_) { cursorObj = null; }
+    }
+    const page = Math.max(1, Number(cursorObj?.page || 1));
+
+    const rows = await getRows();
+    if (!rows || rows.length === 0) return res.json({ items: [], next_cursor: null, total_estimate: 0 });
+
+    // --- Same filtering logic as respondFilteredOrders ---
+    const headers = rows[0].map(h => h.trim());
+    const data = rows.slice(1).map(row => headers.reduce((obj, key, i) => { obj[key] = row[i] || ''; return obj; }, {}));
+
+    const emailQuery = (req.query.email || '').toLowerCase().trim();
+    const typeRaw  = String(req.query.type  || '').trim();
+    const type2Raw = String(req.query.type2 || '').trim();
+    const confirmed = req.query.confirmed === 'true';
+    const qTypes = _splitCSVExact(typeRaw);
+
+    const filtered = data.filter(row => {
+      const email  = String(row.Email || '').toLowerCase();
+      const type   = String(row.Type  || '');
+      const type2  = String(row.Type2 || '');
+      const text   = String(row.Textarea || '').toLowerCase();
+      const matchEmail = emailQuery ? email.includes(emailQuery) : true;
+      const matchType = qTypes.length
+        ? qTypes.some(qt =>
+            csvHasTagExact(type, qt)  || csvHasAcronym(type, qt) ||
+            csvHasTagExact(type2, qt) || csvHasAcronym(type2, qt)
+          )
+        : true;
+      const matchType2 = type2Raw ? (csvHasTagExact(type2, type2Raw) || csvHasAcronym(type2, type2Raw)) : true;
+      const matchConfirmed = confirmed ? text.includes('confirmed') : true;
+      return matchEmail && matchType && matchType2 && matchConfirmed;
+    });
+
+    // Server-side de-dup by TeamName
+    let items = dedupeByTeamName(filtered);
+
+    // Deterministic ordering to keep page sequence stable across requests
+    items.sort((a, b) => (stableIdForOrder(a) > stableIdForOrder(b) ? 1 : -1));
+
+    const total = items.length;
+    const start = (page - 1) * PAGE_SIZE;
+    const end = Math.min(page * PAGE_SIZE, total);
+    const slice = start < end ? items.slice(start, end) : [];
+    const hasMore = end < total;
+    const next_cursor = hasMore ? JSON.stringify({ page: page + 1 }) : null;
+
+    return res.json({ items: slice, next_cursor, total_estimate: total });
+  } catch (err) {
+    console.error('Error in /ordersPaged:', err);
+    res.status(200).json({ items: [], next_cursor: null, total_estimate: 0 });
+  }
+});
 
 // === GET /leads (with cache) ===
 app.get('/leads', async (req, res) => {
@@ -1219,12 +1301,14 @@ app.post('/indexVectors', async (req, res) => {
 
 // === POST /search ===
 // Body: { q: string, limit?: number }
+// === POST /search ===
 app.post('/search', async (req, res) => {
   try {
     const rawQ = String(req.body.q || '').trim();
     const q = normalizeQuery(rawQ);
     const limit = Math.min(Number(req.body.limit || 50), 100);
-    if (!q) return res.status(400).json({ error: 'empty query' });
+    // Be lenient on first-load / empty submissions: return empty list instead of 400
+    if (!q) return res.status(200).json([]);
 
     await ensureCollection();
     const vec = await embedText(q);
@@ -1324,6 +1408,94 @@ app.post('/search', async (req, res) => {
   }
 });
 
+// === GET /search ===
+app.get('/search', async (req, res) => {
+  try {
+    const rawQ = String(req.query.q || '').trim();
+    const q = normalizeQuery(rawQ);
+    const limit = Math.min(Number(req.query.limit || 50), 100);
+    if (!q) return res.status(200).json([]);
+
+    await ensureCollection();
+    const vec = await embedText(q);
+    const hits = await vectorSearch(vec, limit);
+
+    let items = (hits || [])
+      .map(h => ({ ...(h.payload || {}), __score: (typeof h.score === 'number' ? h.score : 0) }))
+      .filter(obj => Object.keys(obj).length > 0);
+
+    // Deduplicate and re-rank — same as POST /search
+    items = dedupeByTeamNameScore(items);
+
+    {
+      const qn = String(q).toLowerCase();
+      const qTokens = qn.split(/[^a-z0-9]+/).filter(Boolean);
+      for (const it of items) {
+        const feat = keywordFeatures(it, qTokens);
+        let final = (typeof it.__score === 'number' ? it.__score : 0);
+        if (feat.typeHit)  final += 0.30;
+        if (feat.type2Hit) final += 0.15;
+        final += Math.min(feat.overlap, 3) * 0.06;
+        if (feat.hasAcr) final += 0.08;
+        if (!feat.typeHit && !feat.type2Hit && feat.overlap === 0) final -= 0.10;
+        if (String(it.Partner_confirmation||'').trim()) final += 0.03;
+
+        const wantSEO  = qTokens.includes('seo') || qn.includes('technical seo');
+        const wantPR   = qTokens.includes('pr') || qn.includes('public relations');
+        const wantCICD = qn.includes('ci/cd') || qn.includes('ci cd') || qn.includes('cicd') ||
+                         (qTokens.includes('ci') && qTokens.includes('cd'));
+        if (wantSEO) {
+          const seoHit = hasTag(it,'seo') || hasTag(it,'technical seo') || hasTag(it,'on-page seo') ||
+                         hasTag(it,'link building') || hasTag(it,'content seo');
+          if (seoHit) final += 0.12; else final -= 0.22;
+        }
+        if (wantPR) {
+          const prHit = hasTag(it,'pr') || hasTag(it,'public relations') || hasTag(it,'media relations');
+          if (prHit) final += 0.10; else final -= 0.18;
+        }
+        if (wantCICD) {
+          const cicdHit = hasTag(it,'ci/cd') || hasTag(it,'ci cd') || hasTag(it,'cicd') || hasTag(it,'ci') || hasTag(it,'cd');
+          if (cicdHit) final += 0.10; else final -= 0.18;
+        }
+        it.__score = final;
+      }
+    }
+
+    {
+      const qn = String(q).toLowerCase();
+      const qTokens = qn.split(/[^a-z0-9]+/).filter(Boolean);
+      const qSet = new Set(qTokens);
+      const prefers = [];
+      if (qSet.has('ci') || qn.includes('ci/cd') || qn.includes('ci cd') || qn.includes('cicd') || qn.includes('pipeline')) {
+        prefers.push('ci', 'cicd', 'ci/cd', 'pipeline', 'monorepo', 'github actions', 'gitlab', 'jenkins', 'circleci');
+      }
+      if (qSet.has('pr') || qn.includes('public relations')) {
+        prefers.push('pr', 'public relations', 'media relations');
+      }
+      if (qSet.has('marketing') || qn.includes('strategy')) {
+        prefers.push('marketing', 'digital strategy', 'content', 'seo', 'brand strategy', 'go-to-market');
+      }
+      if (prefers.length) {
+        const prefsLc = prefers.map(s => s.toLowerCase());
+        items = items.map(it => {
+          const t1 = String(it.Type || '').toLowerCase();
+          const t2 = String(it.Type2 || '').toLowerCase();
+          const tg = String(it.Textarea || '').toLowerCase();
+          const hasPref = prefsLc.some(p => t1.includes(p) || t2.includes(p) || tg.includes(p));
+          const boost = hasPref ? 0.15 : 0;
+          return { ...it, __score: (it.__score || 0) + boost };
+        });
+      }
+    }
+
+    items.sort((a,b) => (b.__score || 0) - (a.__score || 0));
+    res.json(items);
+  } catch (e) {
+    console.error('search (GET) error:', e);
+    res.status(500).json({ error: 'search failed' });
+  }
+});
+
 // === POST /searchPaged ===
 // Body: { q: string, limit?: number (<=50), cursor?: string(JSON) }
 app.post('/searchPaged', async (req, res) => {
@@ -1339,7 +1511,8 @@ app.post('/searchPaged', async (req, res) => {
     }
     const page = Math.max(1, Number(cursorObj?.page || 1));
 
-    if (!q) return res.status(400).json({ error: 'empty query' });
+    // Be lenient on first-load / empty submissions
+    if (!q) return res.status(200).json({ items: [], next_cursor: null, total_estimate: 0 });
 
     await ensureCollection();
     const vec = await embedText(q);
@@ -1431,6 +1604,17 @@ app.post('/searchPaged', async (req, res) => {
   } catch (e) {
     console.error('searchPaged error:', e);
     res.status(500).json({ error: 'searchPaged failed' });
+  }
+});
+
+// --- Optional: warmup endpoint to mitigate cold start of Qdrant/Jina ---
+app.get('/warmup', async (req, res) => {
+  try {
+    if (QDRANT_URL && QDRANT_API_KEY) { await ensureCollection(); }
+    if (JINA_API_KEY) { try { await embedText('ping'); } catch (_) {} }
+    res.json({ ok: true });
+  } catch (_) {
+    res.json({ ok: true }); // never fail warmup
   }
 });
 
