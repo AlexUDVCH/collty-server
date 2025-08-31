@@ -345,6 +345,18 @@ function dedupeByTeamName(items){
   return out;
 }
 
+// Deduplicate by normalized TeamName (case-insensitive, trimmed); keep highest __score; fallback to stable key if TeamName missing
+function dedupeByTeamNameScore(items){
+  const out = new Map();
+  for (const it of items){
+    const keyTN = String(it.TeamName || '').trim().toLowerCase();
+    const key = keyTN || stableKeyFromOrder(it);
+    const prev = out.get(key);
+    if (!prev || (it.__score || 0) > (prev.__score || 0)) out.set(key, it);
+  }
+  return Array.from(out.values());
+}
+
 // --- Stable identity helpers to avoid duplicate vector points and to deduplicate search hits ---
 function stableKeyFromOrder(o) {
   const S = v => String(v || '').trim().toLowerCase();
@@ -1223,18 +1235,8 @@ app.post('/search', async (req, res) => {
       .map(h => ({ ...(h.payload || {}), __score: (typeof h.score === 'number' ? h.score : 0) }))
       .filter(obj => Object.keys(obj).length > 0);
 
-    // Deduplicate by stable key (same team may have multiple vector points from previous runs)
-    {
-      const map = new Map();
-      for (const it of items) {
-        const k = stableKeyFromOrder(it);
-        const prev = map.get(k);
-        if (!prev || (it.__score || 0) > (prev.__score || 0)) {
-          map.set(k, it);
-        }
-      }
-      items = Array.from(map.values());
-    }
+    // Deduplicate by TeamName (keep highest score); fallback to stable key if TeamName missing
+    items = dedupeByTeamNameScore(items);
 
     // --- Hybrid re-rank (VSS cosine + lightweight keyword/field boosts) ---
     {
@@ -1346,21 +1348,11 @@ app.post('/searchPaged', async (req, res) => {
     const candidatesK = Math.min(1000, page * PAGE_SIZE * 2);
     const hits = await vectorSearch(vec, candidatesK);
 
-    // Map & dedupe by stable key
+    // Map & dedupe by TeamName (keep highest score); fallback to stable key if TeamName missing
     let items = (hits || [])
       .map(h => ({ ...(h.payload || {}), __score: (typeof h.score === 'number' ? h.score : 0) }))
       .filter(obj => Object.keys(obj).length > 0);
-    {
-      const map = new Map();
-      for (const it of items) {
-        const k = stableKeyFromOrder(it);
-        const prev = map.get(k);
-        if (!prev || (it.__score || 0) > (prev.__score || 0)) {
-          map.set(k, it);
-        }
-      }
-      items = Array.from(map.values());
-    }
+    items = dedupeByTeamNameScore(items);
 
     // ---- Hybrid re-rank (same logic as /search) ----
     {
