@@ -17,6 +17,10 @@ const COLLECTION = 'orders';
 if (!QDRANT_URL || !QDRANT_API_KEY || !JINA_API_KEY) {
   console.warn('[vectors] Missing env vars: QDRANT_URL / QDRANT_API_KEY / JINA_API_KEY');
 }
+// --- Helper: detect if vectors are enabled (all env vars set) ---
+function vectorsEnabled() {
+  return Boolean(QDRANT_URL && QDRANT_API_KEY && JINA_API_KEY);
+}
 
 const app = express();
 // Disable etag/304 and force no-store to avoid empty 304 bodies confusing the client
@@ -1310,6 +1314,10 @@ app.post('/search', async (req, res) => {
     const limit = Math.min(Number(req.body.limit || 50), 100);
     // Be lenient on first-load / empty submissions: return empty list instead of 400
     if (!q) return res.status(200).json([]);
+    if (!vectorsEnabled()) {
+      console.warn('[search] vectors are disabled (missing env) — returning empty result');
+      return res.status(200).json([]);
+    }
 
     await ensureCollection();
     const vec = await embedText(q);
@@ -1416,6 +1424,10 @@ app.get('/search', async (req, res) => {
     const q = normalizeQuery(rawQ);
     const limit = Math.min(Number(req.query.limit || 50), 100);
     if (!q) return res.status(200).json([]);
+    if (!vectorsEnabled()) {
+      console.warn('[search:GET] vectors are disabled (missing env) — returning empty result');
+      return res.status(200).json([]);
+    }
 
     await ensureCollection();
     const vec = await embedText(q);
@@ -1514,6 +1526,10 @@ app.post('/searchPaged', async (req, res) => {
 
     // Be lenient on first-load / empty submissions
     if (!q) return res.status(200).json({ items: [], next_cursor: null, total_estimate: 0 });
+    if (!vectorsEnabled()) {
+      console.warn('[searchPaged] vectors are disabled (missing env) — returning empty page');
+      return res.status(200).json({ items: [], next_cursor: null, total_estimate: 0 });
+    }
 
     await ensureCollection();
     const vec = await embedText(q);
@@ -1611,8 +1627,7 @@ app.post('/searchPaged', async (req, res) => {
 // --- Optional: warmup endpoint to mitigate cold start of Qdrant/Jina ---
 app.get('/warmup', async (req, res) => {
   try {
-    if (QDRANT_URL && QDRANT_API_KEY) { await ensureCollection(); }
-    if (JINA_API_KEY) { try { await embedText('ping'); } catch (_) {} }
+    if (vectorsEnabled()) { await ensureCollection(); try { await embedText('ping'); } catch (_) {} }
     res.json({ ok: true });
   } catch (_) {
     res.json({ ok: true }); // never fail warmup
