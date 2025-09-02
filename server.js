@@ -1779,10 +1779,19 @@ app.use((req, res) => {
   res.status(404).send('Not Found');
 });
 
+// --- Safe warmup wrapper for vector embedding warmup ---
+async function safeWarmup() {
+  try {
+    await embedTextHedged("ping", 300);
+  } catch (e) {
+    console.warn("[warmup] ignored:", e.message);
+  }
+}
+
 app.listen(port, () => {
   // console.log(`🚀 Server running on port ${port}`);
   if (vectorsEnabled()) {
-    setTimeout(() => { embedTextHedged('ping', 300).catch(()=>{}); }, 1500);
-    setInterval(() => { embedTextHedged('ping', 300).catch(()=>{}); }, 5 * 60 * 1000);
+    setTimeout(safeWarmup, 1500);
+    setInterval(safeWarmup, 5 * 60 * 1000);
   }
 });
