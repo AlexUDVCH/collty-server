@@ -25,7 +25,7 @@ function vectorsEnabled() {
 
 const app = express();
 // Keep-Alive agent for all outgoing HTTP(S) requests
-const KEEP_ALIVE_AGENT = new Agent({ keepAlive: true, connections: 16, pipelining: 1 });
+const KEEP_ALIVE_AGENT = new Agent({ connections: 16, pipelining: 0 });
 // Disable etag/304 and force no-store to avoid empty 304 bodies confusing the client
 app.set('etag', false);
 app.use((req, res, next) => {
