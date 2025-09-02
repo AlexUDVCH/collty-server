@@ -2,7 +2,6 @@
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
-const { Agent } = require('undici'); // keep-alive agent for fetch
 
 require('dotenv').config();
 const { randomUUID, createHash } = require('crypto');
@@ -24,8 +23,6 @@ function vectorsEnabled() {
 }
 
 const app = express();
-// Keep-Alive agent for all outgoing HTTP(S) requests
-const KEEP_ALIVE_AGENT = new Agent({ connections: 16, pipelining: 0 });
 // Disable etag/304 and force no-store to avoid empty 304 bodies confusing the client
 app.set('etag', false);
 app.use((req, res, next) => {
@@ -145,8 +142,7 @@ async function embedText(text) {
       model: 'jina-embeddings-v4',
       task: 'retrieval.query',
       dimensions: 2048
-    }),
-    dispatcher: KEEP_ALIVE_AGENT
+    })
   });
   if (!resp.ok) {
     const t = await resp.text().catch(()=> '');
@@ -154,68 +150,6 @@ async function embedText(text) {
   }
   const json = await resp.json();
   return json.data[0].embedding;
-}
-
-// Hedged-request version: launches a second parallel call to Jina if the first hasn't answered
-// within hedgeDelayMs. Whichever returns first wins; the other is aborted.
-async function embedTextHedged(text, hedgeDelayMs = 900) {
-  if (!JINA_API_KEY) throw new Error('JINA_API_KEY is missing');
-  const url = 'https://api.jina.ai/v1/embeddings';
-  const body = JSON.stringify({
-    input: [String(text || '')],
-    model: 'jina-embeddings-v4',
-    task: 'retrieval.query',
-    dimensions: 2048
-  });
-
-  const makeOnce = () => {
-    const ctrl = new AbortController();
-    const p = fetch(url, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${JINA_API_KEY}`, 'Content-Type': 'application/json' },
-      body,
-      signal: ctrl.signal,
-      dispatcher: KEEP_ALIVE_AGENT
-    }).then(async (r) => {
-      if (!r.ok) {
-        const t = await r.text().catch(()=> '');
-        throw new Error(`Jina ${r.status}: ${t}`);
-      }
-      const j = await r.json();
-      return j.data[0].embedding;
-    });
-    return { p, abort: () => ctrl.abort() };
-  };
-
-  const A = makeOnce();
-  let B = null;
-  let startedB = false;
-  const startBTimer = setTimeout(() => { B = makeOnce(); startedB = true; }, hedgeDelayMs);
-
-  try {
-    const winner = await Promise.race([
-      A.p,
-      (async () => {
-        // wait until B is potentially started
-        await new Promise(r => setTimeout(r, hedgeDelayMs + 1));
-        return startedB ? B.p : new Promise(()=>{});
-      })()
-    ]);
-    // cancel losers
-    if (startedB && B) B.abort();
-    A.abort();
-    return winner;
-  } catch (e) {
-    clearTimeout(startBTimer);
-    // if A failed quickly and B hasn't started yet, try a fresh single attempt
-    if (!startedB) {
-      const F = makeOnce();
-      try { const v = await F.p; F.abort(); return v; } catch (e2) { F.abort(); throw e2; }
-    }
-    throw e;
-  } finally {
-    clearTimeout(startBTimer);
-  }
 }
 
 // ------------- Qdrant REST helpers -------------
@@ -226,7 +160,7 @@ async function qdrantFetch(path, init = {}) {
     'Authorization': `Bearer ${QDRANT_API_KEY}`,
     'Content-Type': 'application/json'
   }, init.headers || {});
-  const resp = await fetch(url, { ...init, headers, dispatcher: KEEP_ALIVE_AGENT });
+  const resp = await fetch(url, { ...init, headers });
   return resp;
 }
 
@@ -1448,7 +1382,7 @@ app.post('/search', async (req, res) => {
     }
 
     await ensureCollection();
-    const vec = await embedTextHedged(q);
+    const vec = await embedText(q);
     const hits = await vectorSearch(vec, limit);
 
     // Map results and keep semantic score
@@ -1562,7 +1496,7 @@ app.get('/search', async (req, res) => {
     }
 
     await ensureCollection();
-    const vec = await embedTextHedged(q);
+    const vec = await embedText(q);
     const hits = await vectorSearch(vec, limit);
 
     let items = (hits || [])
@@ -1667,7 +1601,7 @@ app.post('/searchPaged', async (req, res) => {
     }
 
     await ensureCollection();
-    const vec = await embedTextHedged(q);
+    const vec = await embedText(q);
 
     // Candidate pool grows with page to keep global order stable after re-rank
     const candidatesK = Math.min(1000, page * PAGE_SIZE * 2);
@@ -1764,10 +1698,7 @@ app.post('/searchPaged', async (req, res) => {
 // --- Optional: warmup endpoint to mitigate cold start of Qdrant/Jina ---
 app.get('/warmup', async (req, res) => {
   try {
-    if (vectorsEnabled()) {
-      await ensureCollection();
-      try { await embedTextHedged('ping', 300); } catch (_) {}
-    }
+    if (vectorsEnabled()) { await ensureCollection(); try { await embedText('ping'); } catch (_) {} }
     res.json({ ok: true });
   } catch (_) {
     res.json({ ok: true }); // never fail warmup
@@ -1779,19 +1710,6 @@ app.use((req, res) => {
   res.status(404).send('Not Found');
 });
 
-// --- Safe warmup wrapper for vector embedding warmup ---
-async function safeWarmup() {
-  try {
-    await embedTextHedged("ping", 300);
-  } catch (e) {
-    console.warn("[warmup] ignored:", e.message);
-  }
-}
-
 app.listen(port, () => {
   // console.log(`🚀 Server running on port ${port}`);
-  if (vectorsEnabled()) {
-    setTimeout(safeWarmup, 1500);
-    setInterval(safeWarmup, 5 * 60 * 1000);
-  }
 });
