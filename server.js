@@ -641,67 +641,35 @@ function stableIdForOrder(o) {
 
 function buildSearchText(order) {
   const S = v => String(v || '').trim();
+  const parts = [];
 
-  // Core fields
-  const name = S(order.TeamName);
-  const type = S(order.Type);
-  const type2 = S(order.Type2);
-  const tags = S(order.Textarea); // free-form tags/keywords
-  const industry = S(order.industrymarket_expertise);
-  const overview = S(order.X1Q);
-  const status1 = S(order.Status1);
-  const status2 = S(order.Status2);
-  const partners = S(order.Partner_confirmation);
+  // Основные поля
+  if (order.TeamName) parts.push(`Team: ${S(order.TeamName)}`);
+  if (order.Type) parts.push(`Service/Offering Tags: ${S(order.Type)}`);
+  if (order.Type2) parts.push(`Industry Expertise: ${S(order.Type2)}`);
+  if (order.industrymarket_expertise) parts.push(`Market Expertise: ${S(order.industrymarket_expertise)}`);
+  if (order.X1Q) parts.push(`Overview: ${S(order.X1Q)}`);
+  if (order.Textarea) parts.push(`Keywords: ${S(order.Textarea)}`);
+  if (order.Status1) parts.push(`Status1: ${S(order.Status1)}`);
+  if (order.Status2) parts.push(`Status2: ${S(order.Status2)}`);
+  if (order.Partner_confirmation) parts.push(`Partner confirmation: ${S(order.Partner_confirmation)}`);
 
-  // Derive short acronyms from Type/Type2 (PR, SMM, CI/CD -> CICD -> CI/CD etc.)
-  const acronymOf = (str) => S(str)
-    .split(/[^a-z0-9]+/i)
-    .filter(Boolean)
-    .map(w => w[0])
-    .join('')
-    .toUpperCase();
-  const typeAcr = acronymOf(type);
-  const type2Acr = acronymOf(type2);
-
-  // Specialists & CV snippets (sp1..sp10, spcv1..spcv10)
-  const specialists = [];
+  // Специалисты и их опыт
   for (let i = 1; i <= 10; i++) {
-    specialists.push(S(order[`sp${i}`]));
-    specialists.push(S(order[`spcv${i}`]));
+    const sp = S(order[`sp${i}`]);
+    const cv = S(order[`spcv${i}`]);
+    if (sp || cv) {
+      parts.push(`Specialist Role: ${sp} | Specialist Experience: ${cv}`);
+    }
   }
 
-  // Extra context
-  const projectId = S(order.projectid);
-  const brief = S(order.Brief);
-  const docs = S(order.Documents);
-  const nda = S(order.nda);
+  // Дополнительный контекст
+  if (order.projectid) parts.push(`ProjectID: ${S(order.projectid)}`);
+  if (order.Brief) parts.push(`Brief: ${S(order.Brief)}`);
+  if (order.Documents) parts.push(`Docs: ${S(order.Documents)}`);
+  if (order.nda) parts.push(`NDA: ${S(order.nda)}`);
 
-  // Weighting: repeat highly-informative fields to bias embedding similarity
-  const strong = [type, type2].filter(Boolean).join(' | ');
-  const strongBoost = [strong, strong, strong].filter(Boolean).join(' | '); // 3x boost for Type/Type2
-
-  const soft = [tags, industry, overview].filter(Boolean).join(' | ');
-
-  // Include acronyms only if they look meaningful (2-5 chars). Also normalize CI/CD forms.
-  const acrsRaw = [typeAcr, type2Acr]
-    .filter(a => a && a.length >= 2 && a.length <= 5);
-  const acrs = acrsRaw
-    .map(a => a.replace(/\//g, '')) // CI/CD -> CICD
-    .join(' ');
-
-  return [
-    name,
-    strongBoost,            // boosted Type/Type2
-    acrs,                   // PR / SMM / CI / CICD
-    soft,                   // tags + industry + overview
-    status1, status2,
-    partners,
-    specialists.join(' | '),
-    projectId,
-    brief, docs, nda,
-  ]
-    .filter(Boolean)
-    .join(' | ');
+  return parts.filter(Boolean).join(' | ');
 }
 
 // === GET /keywords ===
