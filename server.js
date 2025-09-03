@@ -211,6 +211,63 @@ async function embedTextCached(q){
   return vec;
 }
 
+// Robust batch embedding with retry and fallback splitting
+async function embedBatch(texts) {
+  if (!Array.isArray(texts) || texts.length === 0) return [];
+  const MAX_RETRIES = Number(process.env.JINA_MAX_RETRIES || 2);
+  const BASE_DELAY = 250; // ms
+  const payload = (arr) => ({
+    input: arr,
+    model: CURRENT_MODEL,
+    task: 'retrieval.passage',
+    dimensions: CURRENT_DIM
+  });
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const resp = await fetch('https://api.jina.ai/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${JINA_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload(texts))
+      });
+      const textBody = await resp.text();
+      if (!resp.ok) {
+        const ridMatch = textBody && textBody.match(/RID:\s*([a-f0-9]+)/i);
+        const rid = ridMatch ? ridMatch[1] : null;
+        const err = new Error(`Jina batch error ${resp.status}${rid ? ` [RID:${rid}]` : ''}: ${textBody}`);
+        err.status = resp.status;
+        throw err;
+      }
+      const emb = JSON.parse(textBody);
+      return emb.data.map(d => d.embedding);
+    } catch (e) {
+      const status = e && (e.status || 0);
+      const retriable = status === 500 || status === 503 || status === 429;
+      if (attempt < MAX_RETRIES && retriable) {
+        const delay = BASE_DELAY * Math.pow(2, attempt) + Math.floor(Math.random() * 100);
+        console.warn(`[embedBatch] retry ${attempt + 1}/${MAX_RETRIES} after ${delay}ms due to`, String(e.message || e));
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      // Final failure or non-retriable: split if possible
+      if (texts.length > 1) {
+        const mid = Math.floor(texts.length / 2);
+        const left = await embedBatch(texts.slice(0, mid));
+        const right = await embedBatch(texts.slice(mid));
+        return left.concat(right);
+      }
+      // Single item fallback to per-item embed (has its own retries)
+      const vec = await embedText(texts[0]);
+      return [vec];
+    }
+  }
+  // Should not reach here
+  return [];
+}
+
 // ------------- Qdrant REST helpers -------------
 async function qdrantFetch(path, init = {}) {
   if (!QDRANT_URL || !QDRANT_API_KEY) throw new Error('QDRANT_URL/QDRANT_API_KEY missing');
@@ -1445,32 +1502,14 @@ app.post('/indexVectors', async (req, res) => {
     // ensure collection exists
     await ensureCollection();
 
-    const BATCH = 64;
+    const BATCH = Number(process.env.EMB_BATCH || 32); // default smaller batch for stability
     let upserted = 0;
     for (let i = 0; i < orders.length; i += BATCH) {
       const slice = orders.slice(i, i + BATCH);
       const texts = slice.map(buildSearchText);
 
-      // batch embed
-      const resp = await fetch('https://api.jina.ai/v1/embeddings', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${JINA_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          input: texts,
-          model: CURRENT_MODEL,
-          task: 'retrieval.passage',
-          dimensions: CURRENT_DIM
-        })
-      });
-      if (!resp.ok) {
-        const t = await resp.text().catch(()=> '');
-        throw new Error(`Jina batch error ${resp.status}: ${t}`);
-      }
-      const emb = await resp.json();
-      const vectors = emb.data.map(d => d.embedding);
+      // robust batch embeddings (retries + split fallback)
+      const vectors = await embedBatch(texts);
 
       const points = slice.map((o, idx) => ({
         id: stableIdForOrder(o),
