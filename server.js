@@ -643,10 +643,22 @@ function buildSearchText(order) {
   const S = v => String(v || '').trim();
   const parts = [];
 
-  // Основные поля
+  // === Primary weighting (boost important fields in the embedding text) ===
+  // We duplicate key signals in a compact way so the embedding pays more attention to them.
+  const svc = S(order.Type);
+  const ind = S(order.Type2);
+  const primaryChunks = [];
+  if (svc) primaryChunks.push(svc);
+  if (ind) primaryChunks.push(ind);
+  if (primaryChunks.length) {
+    // Two repetitions is usually enough; avoids token bloat but strengthens the signal
+    parts.push(`Primary Focus: ${primaryChunks.join(' | ')} || ${primaryChunks.join(' | ')}`);
+  }
+
+  // === Основные поля (explicit structure for the model) ===
   if (order.TeamName) parts.push(`Team: ${S(order.TeamName)}`);
-  if (order.Type) parts.push(`Service/Offering Tags: ${S(order.Type)}`);
-  if (order.Type2) parts.push(`Industry Expertise: ${S(order.Type2)}`);
+  if (svc) parts.push(`Service/Offering Tags: ${svc}`);
+  if (ind) parts.push(`Industry Expertise: ${ind}`);
   if (order.industrymarket_expertise) parts.push(`Market Expertise: ${S(order.industrymarket_expertise)}`);
   if (order.X1Q) parts.push(`Overview: ${S(order.X1Q)}`);
   if (order.Textarea) parts.push(`Keywords: ${S(order.Textarea)}`);
@@ -654,7 +666,7 @@ function buildSearchText(order) {
   if (order.Status2) parts.push(`Status2: ${S(order.Status2)}`);
   if (order.Partner_confirmation) parts.push(`Partner confirmation: ${S(order.Partner_confirmation)}`);
 
-  // Специалисты и их опыт
+  // === Специалисты и их опыт ===
   for (let i = 1; i <= 10; i++) {
     const sp = S(order[`sp${i}`]);
     const cv = S(order[`spcv${i}`]);
@@ -663,7 +675,7 @@ function buildSearchText(order) {
     }
   }
 
-  // Дополнительный контекст
+  // === Дополнительный контекст ===
   if (order.projectid) parts.push(`ProjectID: ${S(order.projectid)}`);
   if (order.Brief) parts.push(`Brief: ${S(order.Brief)}`);
   if (order.Documents) parts.push(`Docs: ${S(order.Documents)}`);
