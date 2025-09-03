@@ -131,28 +131,81 @@ async function batchWriteValues({ sheets, spreadsheetId, updates, valueInputOpti
   }
 }
 
+// --- Small in-memory cache for query embeddings (dedup transient Jina errors) ---
+const _EMB_CACHE = new Map(); // key -> { vec, exp }
+const EMB_TTL_MS = Number(process.env.EMB_TTL_MS || 2 * 60 * 1000); // default 2 minutes
+function _embGet(key){
+  const v = _EMB_CACHE.get(key);
+  if (v && v.exp > Date.now()) return v.vec;
+  if (v) _EMB_CACHE.delete(key);
+}
+function _embSet(key, vec){
+  _EMB_CACHE.set(key, { vec, exp: Date.now() + EMB_TTL_MS });
+  // soft cap ~1000 entries
+  if (_EMB_CACHE.size > 1000) {
+    const firstKey = _EMB_CACHE.keys().next().value;
+    _EMB_CACHE.delete(firstKey);
+  }
+}
+
 // ------------- Jina embeddings (text → vector[EMB_DIM]) -------------
 async function embedText(text) {
   if (!JINA_API_KEY) throw new Error('JINA_API_KEY is missing');
-  const resp = await fetch('https://api.jina.ai/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${JINA_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      input: [String(text || '')],
-      model: JINA_MODEL,
-      task: 'retrieval.query',
-      dimensions: EMB_DIM
-    })
-  });
-  if (!resp.ok) {
-    const t = await resp.text().catch(()=> '');
-    throw new Error(`Jina error ${resp.status}: ${t}`);
+  const payload = {
+    input: [String(text || '')],
+    model: JINA_MODEL,
+    task: 'retrieval.query',
+    dimensions: EMB_DIM
+  };
+  const MAX_RETRIES = Number(process.env.JINA_MAX_RETRIES || 2); // 2 retries after first try
+  const BASE_DELAY = 250; // ms
+
+  let lastErr = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const resp = await fetch('https://api.jina.ai/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${JINA_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      const textBody = await resp.text();
+      if (!resp.ok) {
+        // Try to extract RID and status
+        const ridMatch = textBody && textBody.match(/RID:\s*([a-f0-9]+)/i);
+        const rid = ridMatch ? ridMatch[1] : null;
+        const err = new Error(`Jina error ${resp.status}${rid ? ` [RID:${rid}]` : ''}: ${textBody}`);
+        err.status = resp.status;
+        throw err;
+      }
+      // ok -> parse once
+      const json = JSON.parse(textBody);
+      return json.data[0].embedding;
+    } catch (e) {
+      lastErr = e;
+      const status = e && (e.status || 0);
+      const retriable = status === 500 || status === 503 || status === 429;
+      if (attempt < MAX_RETRIES && retriable) {
+        const delay = BASE_DELAY * Math.pow(2, attempt) + Math.floor(Math.random() * 100);
+        console.warn(`[embedText] retry ${attempt + 1}/${MAX_RETRIES} after ${delay}ms due to`, String(e.message || e));
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw e;
+    }
   }
-  const json = await resp.json();
-  return json.data[0].embedding;
+  throw lastErr || new Error('Unknown Jina error');
+}
+
+async function embedTextCached(q){
+  const key = String(q || '').trim();
+  const hit = _embGet(key);
+  if (hit) return hit;
+  const vec = await embedText(key);
+  _embSet(key, vec);
+  return vec;
 }
 
 // ------------- Qdrant REST helpers -------------
@@ -241,6 +294,41 @@ app.get('/qdrantInfo', async (req, res) => {
   } catch (e) {
     console.error('Error in /qdrantInfo:', e);
     return res.status(500).json({ error: 'Failed to fetch Qdrant collection info' });
+  }
+});
+
+// === POST /vectors/recreate — drop & recreate collection with current EMB_DIM ===
+app.post('/vectors/recreate', async (req, res) => {
+  try {
+    if (!vectorsEnabled()) {
+      return res.status(400).json({ error: 'Vectors not enabled (missing env vars)' });
+    }
+    // Drop old collection if exists
+    try {
+      const del = await qdrantFetch(`/collections/${COLLECTION}`, { method: 'DELETE' });
+      if (!del.ok && del.status !== 404) {
+        const t = await del.text().catch(()=>'');
+        return res.status(500).json({ error: `Delete failed ${del.status}: ${t}` });
+      }
+    } catch (e) {
+      // continue even if delete errors (non-existent etc.)
+      console.warn('[vectors/recreate] delete error (ignored):', String(e.message||e));
+    }
+    // Create with current VECTOR_SIZE/EMB_DIM
+    const create = await qdrantFetch(`/collections/${COLLECTION}`, {
+      method: 'PUT',
+      body: JSON.stringify({ vectors: { size: VECTOR_SIZE, distance: 'Cosine' } })
+    });
+    if (!create.ok) {
+      const t = await create.text().catch(()=> '');
+      return res.status(500).json({ error: `Create failed ${create.status}: ${t}` });
+    }
+    const info = await qdrantFetch(`/collections/${COLLECTION}`);
+    const j = info.ok ? await info.json() : null;
+    return res.json({ ok: true, collection: COLLECTION, model: JINA_MODEL, emb_dim: EMB_DIM, qdrant: j });
+  } catch (e) {
+    console.error('Error in /vectors/recreate:', e);
+    res.status(500).json({ error: 'Failed to recreate collection' });
   }
 });
 
@@ -1417,7 +1505,7 @@ app.post('/search', async (req, res) => {
     }
 
     await ensureCollection();
-    const vec = await embedText(q);
+    const vec = await embedTextCached(q);
     const hits = await vectorSearch(vec, limit);
 
     // Map results and keep semantic score
@@ -1531,7 +1619,7 @@ app.get('/search', async (req, res) => {
     }
 
     await ensureCollection();
-    const vec = await embedText(q);
+    const vec = await embedTextCached(q);
     const hits = await vectorSearch(vec, limit);
 
     let items = (hits || [])
@@ -1636,7 +1724,7 @@ app.post('/searchPaged', async (req, res) => {
     }
 
     await ensureCollection();
-    const vec = await embedText(q);
+    const vec = await embedTextCached(q);
 
     // Candidate pool grows with page to keep global order stable after re-rank
     const candidatesK = Math.min(1000, page * PAGE_SIZE * 2);
