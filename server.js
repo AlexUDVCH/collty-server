@@ -203,7 +203,7 @@ async function embedText(text) {
 }
 
 async function embedTextCached(q){
-  const key = String(q || '').trim();
+  const key = `${CURRENT_MODEL}|${CURRENT_DIM}|${String(q || '').trim()}`;
   const hit = _embGet(key);
   if (hit) return hit;
   const vec = await embedText(key);
@@ -385,6 +385,7 @@ app.post('/vectors/recreate', async (req, res) => {
     }
     const info = await qdrantFetch(`/collections/${COLLECTION}`);
     const j = info.ok ? await info.json() : null;
+    try { _EMB_CACHE.clear(); } catch (_) {}
     return res.json({ ok: true, collection: COLLECTION, model: CURRENT_MODEL, emb_dim: CURRENT_DIM, qdrant: j });
   } catch (e) {
     console.error('Error in /vectors/recreate:', e);
@@ -1875,6 +1876,7 @@ app.post('/embeddingConfig', async (req, res) => {
       }
       CURRENT_DIM = d;
     }
+    try { _EMB_CACHE.clear(); } catch (_) {}
 
     let recreated = false;
     let qdrant = null;
