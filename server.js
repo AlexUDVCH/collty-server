@@ -1376,6 +1376,76 @@ app.patch('/leads/:id', async (req, res) => {
 });
 
 // --- Exact-phrase helpers (to prioritize exact matches in TeamName / Type / Type2 / Textarea) ---
+// --- Lightweight MMR diversification (token/Jaccard based; no extra embeddings) ---
+function _itemTokens(it){
+  const parts = [];
+  const pushCSV = (s) => String(s||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean).forEach(t=>parts.push(t));
+  const pushWords = (s) => String(s||'').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).forEach(w=>parts.push(w));
+  // High-signal fields first
+  pushCSV(it.Type);
+  pushCSV(it.Type2);
+  pushWords(it.TeamName);
+  // Limited tail from tags/keywords to avoid noise
+  const text = String(it.Textarea||'');
+  pushWords(text.slice(0, 300));
+  // Add acronyms (PR, SMM, CICD)
+  const acr = _acronym([it.Type, it.Type2].map(x=>String(x||'')).join(' '));
+  if (acr) parts.push(acr.toLowerCase());
+  return Array.from(new Set(parts));
+}
+function _jaccard(aSet, bSet){
+  let inter = 0;
+  aSet.forEach(x => { if (bSet.has(x)) inter++; });
+  const union = aSet.size + bSet.size - inter;
+  return union ? (inter / union) : 0;
+}
+// Select K items in diversified order based on MMR.
+// items: [{... , __score:number}], K: how many to keep in order, lambda: trade-off [0..1]
+function mmrDiversifyOrder(items, K = 10, lambda = 0.7){
+  if (!Array.isArray(items) || items.length <= 1) return items;
+  // Precompute token sets
+  const tokSets = items.map(_itemTokens).map(arr => new Set(arr));
+  const picked = [];
+  const remaining = items.map((_,i)=>i);
+  // Start from the best by score
+  remaining.sort((ia, ib) => (items[ib].__score||0) - (items[ia].__score||0));
+  picked.push(remaining.shift());
+  while (picked.length < Math.min(K, items.length) && remaining.length){
+    let bestIdx = 0, bestVal = -Infinity;
+    for (let r = 0; r < remaining.length; r++){
+      const i = remaining[r];
+      const relevance = items[i].__score || 0;
+      let maxSim = 0;
+      for (const j of picked){
+        const s = _jaccard(tokSets[i], tokSets[j]);
+        if (s > maxSim) maxSim = s;
+      }
+      const mmr = lambda * relevance - (1 - lambda) * maxSim;
+      if (mmr > bestVal){ bestVal = mmr; bestIdx = r; }
+    }
+    picked.push(remaining.splice(bestIdx,1)[0]);
+  }
+  // Build diversified order for first K, then append the rest by score
+  const ordered = picked.map(i => items[i]);
+  const pickedSet = new Set(picked);
+  const rest = items.filter((_,idx)=>!pickedSet.has(idx)).sort((a,b)=> (b.__score||0)-(a.__score||0));
+  return ordered.concat(rest);
+}
+// Decide whether to apply diversification: only when top-N are too similar.
+function shouldDiversify(items, checkTopN = 8, simThreshold = 0.55){
+  const N = Math.min(checkTopN, items.length);
+  if (N < 3) return false;
+  const sets = items.slice(0, N).map(_itemTokens).map(arr => new Set(arr));
+  let pairs = 0, high = 0;
+  for (let i=0;i<N;i++){
+    for (let j=i+1;j<N;j++){
+      pairs++;
+      if (_jaccard(sets[i], sets[j]) >= simThreshold) high++;
+    }
+  }
+  // Diversify only if more than half of pairs are very similar
+  return pairs > 0 && (high / pairs) > 0.5;
+}
 function escapeRegExp(s){ return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 // Extract meaningful multi-word phrases directly from the raw query (without over-normalizing).
@@ -1640,7 +1710,11 @@ app.post('/search', async (req, res) => {
       });
     }
 
+    // Final ordering: diversify if many top results are near-identical by tags/keywords
     items.sort((a,b) => (b.__score || 0) - (a.__score || 0));
+    if (shouldDiversify(items, 8, 0.55)) {
+      items = mmrDiversifyOrder(items, Math.min(10, items.length), 0.7);
+    }
     res.json(items);
   } catch (e) {
     console.error('search error:', e);
@@ -1735,7 +1809,11 @@ app.get('/search', async (req, res) => {
       }
     }
 
+    // Final ordering: diversify if many top results are near-identical by tags/keywords
     items.sort((a,b) => (b.__score || 0) - (a.__score || 0));
+    if (shouldDiversify(items, 8, 0.55)) {
+      items = mmrDiversifyOrder(items, Math.min(10, items.length), 0.7);
+    }
     res.json(items);
   } catch (e) {
     console.error('search (GET) error:', e);
@@ -1844,8 +1922,11 @@ app.post('/searchPaged', async (req, res) => {
       }
     }
 
-    // Stable sort with tie-breaker
+    // Stable sort + optional diversification for the current page window
     items.sort((a,b) => (b.__score || 0) - (a.__score || 0) || (stableIdForOrder(a) > stableIdForOrder(b) ? 1 : -1));
+    if (shouldDiversify(items, 8, 0.55)) {
+      items = mmrDiversifyOrder(items, Math.min(PAGE_SIZE, items.length), 0.7);
+    }
 
     const total = items.length;
     const start = (page - 1) * PAGE_SIZE;
