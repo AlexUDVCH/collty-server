@@ -16,6 +16,9 @@ const EMB_DIM = Number(process.env.EMB_DIM || 2048);
 // Keep VECTOR_SIZE synced with EMB_DIM
 const VECTOR_SIZE = EMB_DIM;
 const COLLECTION = 'orders';
+// Runtime-overridable values (can be changed via /embeddingConfig)
+let CURRENT_MODEL = JINA_MODEL;
+let CURRENT_DIM = EMB_DIM;
 
 if (!QDRANT_URL || !QDRANT_API_KEY || !JINA_API_KEY) {
   console.warn('[vectors] Missing env vars: QDRANT_URL / QDRANT_API_KEY / JINA_API_KEY');
@@ -153,9 +156,9 @@ async function embedText(text) {
   if (!JINA_API_KEY) throw new Error('JINA_API_KEY is missing');
   const payload = {
     input: [String(text || '')],
-    model: JINA_MODEL,
+    model: CURRENT_MODEL,
     task: 'retrieval.query',
-    dimensions: EMB_DIM
+    dimensions: CURRENT_DIM
   };
   const MAX_RETRIES = Number(process.env.JINA_MAX_RETRIES || 2); // 2 retries after first try
   const BASE_DELAY = 250; // ms
@@ -229,7 +232,7 @@ async function ensureCollection() {
   // create
   const create = await qdrantFetch(`/collections/${COLLECTION}`, {
     method: 'PUT',
-    body: JSON.stringify({ vectors: { size: VECTOR_SIZE, distance: 'Cosine' } })
+    body: JSON.stringify({ vectors: { size: CURRENT_DIM, distance: 'Cosine' } })
   });
   if (!create.ok) {
     const t = await create.text().catch(()=> '');
@@ -287,8 +290,8 @@ app.get('/qdrantInfo', async (req, res) => {
       vectors,
       size: vectors?.size ?? null,
       distance: vectors?.distance ?? null,
-      model: JINA_MODEL,
-      emb_dim: EMB_DIM,
+      model: CURRENT_MODEL,
+      emb_dim: CURRENT_DIM,
     };
     return res.json(out);
   } catch (e) {
@@ -317,7 +320,7 @@ app.post('/vectors/recreate', async (req, res) => {
     // Create with current VECTOR_SIZE/EMB_DIM
     const create = await qdrantFetch(`/collections/${COLLECTION}`, {
       method: 'PUT',
-      body: JSON.stringify({ vectors: { size: VECTOR_SIZE, distance: 'Cosine' } })
+      body: JSON.stringify({ vectors: { size: CURRENT_DIM, distance: 'Cosine' } })
     });
     if (!create.ok) {
       const t = await create.text().catch(()=> '');
@@ -325,7 +328,7 @@ app.post('/vectors/recreate', async (req, res) => {
     }
     const info = await qdrantFetch(`/collections/${COLLECTION}`);
     const j = info.ok ? await info.json() : null;
-    return res.json({ ok: true, collection: COLLECTION, model: JINA_MODEL, emb_dim: EMB_DIM, qdrant: j });
+    return res.json({ ok: true, collection: COLLECTION, model: CURRENT_MODEL, emb_dim: CURRENT_DIM, qdrant: j });
   } catch (e) {
     console.error('Error in /vectors/recreate:', e);
     res.status(500).json({ error: 'Failed to recreate collection' });
@@ -1457,9 +1460,9 @@ app.post('/indexVectors', async (req, res) => {
         },
         body: JSON.stringify({
           input: texts,
-          model: JINA_MODEL,
+          model: CURRENT_MODEL,
           task: 'retrieval.passage',
-          dimensions: EMB_DIM
+          dimensions: CURRENT_DIM
         })
       });
       if (!resp.ok) {
@@ -1815,6 +1818,52 @@ app.post('/searchPaged', async (req, res) => {
   } catch (e) {
     console.error('searchPaged error:', e);
     res.status(500).json({ error: 'searchPaged failed' });
+  }
+});
+
+// === POST /embeddingConfig — set model/dim at runtime; optional recreate ===
+app.post('/embeddingConfig', async (req, res) => {
+  try {
+    const { model, dim, recreate = false } = req.body || {};
+
+    if (typeof model === 'string' && model.trim()) {
+      CURRENT_MODEL = model.trim();
+    }
+    if (dim !== undefined) {
+      const d = Number(dim);
+      if (!Number.isFinite(d) || d < 16 || d > 4096) {
+        return res.status(400).json({ error: 'Invalid dim; must be a number between 16 and 4096' });
+      }
+      CURRENT_DIM = d;
+    }
+
+    let recreated = false;
+    let qdrant = null;
+    if (recreate) {
+      try {
+        const del = await qdrantFetch(`/collections/${COLLECTION}`, { method: 'DELETE' });
+        if (!del.ok && del.status !== 404) {
+          const t = await del.text().catch(()=> '');
+          return res.status(500).json({ error: `Delete failed ${del.status}: ${t}` });
+        }
+      } catch (_) {}
+      const create = await qdrantFetch(`/collections/${COLLECTION}`, {
+        method: 'PUT',
+        body: JSON.stringify({ vectors: { size: CURRENT_DIM, distance: 'Cosine' } })
+      });
+      if (!create.ok) {
+        const t = await create.text().catch(()=> '');
+        return res.status(500).json({ error: `Create failed ${create.status}: ${t}` });
+      }
+      recreated = true;
+      const info = await qdrantFetch(`/collections/${COLLECTION}`);
+      qdrant = info.ok ? await info.json() : null;
+    }
+
+    return res.json({ ok: true, model: CURRENT_MODEL, emb_dim: CURRENT_DIM, recreated, qdrant });
+  } catch (e) {
+    console.error('Error in /embeddingConfig:', e);
+    res.status(500).json({ error: 'Failed to update embedding config' });
   }
 });
 
