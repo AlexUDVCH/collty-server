@@ -2,11 +2,6 @@
 const express = require('express');
 const { google } = require('googleapis');
 const cors = require('cors');
-const http = require('http');
-const https = require('https');
-const { performance } = require('node:perf_hooks');
-http.globalAgent.keepAlive = true;
-https.globalAgent.keepAlive = true;
 
 require('dotenv').config();
 const { randomUUID, createHash } = require('crypto');
@@ -15,8 +10,11 @@ const QDRANT_URL = process.env.QDRANT_URL;
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
 const JINA_API_KEY = process.env.JINA_API_KEY;
 
-// jina-embeddings-v4 outputs 2048-dim vectors
-const VECTOR_SIZE = 2048;
+// Embedding/model config (override via ENV without code changes)
+const JINA_MODEL = process.env.JINA_MODEL || 'jina-embeddings-v4';
+const EMB_DIM = Number(process.env.EMB_DIM || 2048);
+// Keep VECTOR_SIZE synced with EMB_DIM
+const VECTOR_SIZE = EMB_DIM;
 const COLLECTION = 'orders';
 
 if (!QDRANT_URL || !QDRANT_API_KEY || !JINA_API_KEY) {
@@ -25,19 +23,6 @@ if (!QDRANT_URL || !QDRANT_API_KEY || !JINA_API_KEY) {
 // --- Helper: detect if vectors are enabled (all env vars set) ---
 function vectorsEnabled() {
   return Boolean(QDRANT_URL && QDRANT_API_KEY && JINA_API_KEY);
-}
-
-// --- Perf logging toggle and timed helper ---
-const PERF_LOG = process.env.PERF_LOG === '1';
-async function timed(label, fn) {
-  const t0 = performance.now();
-  try { return await fn(); }
-  finally {
-    if (PERF_LOG) {
-      const dt = (performance.now() - t0).toFixed(1);
-      console.log(`[perf] ${label}: ${dt} ms`);
-    }
-  }
 }
 
 const app = express();
@@ -146,69 +131,28 @@ async function batchWriteValues({ sheets, spreadsheetId, updates, valueInputOpti
   }
 }
 
-// --- Small in-memory LRU for embeddings (dedup hot queries) ---
-const _EMB_CACHE = new Map(); // key -> { vec, exp }
-const EMB_TTL_MS = 2 * 60 * 1000; // 2 minutes
-function _embGet(key){
-  const hit = _EMB_CACHE.get(key);
-  if (hit && hit.exp > Date.now()) return hit.vec;
-  if (hit) _EMB_CACHE.delete(key);
-}
-function _embSet(key, vec){
-  _EMB_CACHE.set(key, { vec, exp: Date.now() + EMB_TTL_MS });
-  // soft bound to ~1000 entries
-  if (_EMB_CACHE.size > 1000) {
-    const k = _EMB_CACHE.keys().next().value; _EMB_CACHE.delete(k);
-  }
-}
-
-// ------------- Jina embeddings (text → vector[2048]) -------------
+// ------------- Jina embeddings (text → vector[EMB_DIM]) -------------
 async function embedText(text) {
   if (!JINA_API_KEY) throw new Error('JINA_API_KEY is missing');
-  const controller = new AbortController();
-  const to = setTimeout(() => controller.abort(), 8000); // 8s hard timeout
-  try {
-    const resp = await fetch('https://api.jina.ai/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${JINA_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        input: [String(text || '')],
-        model: 'jina-embeddings-v4',
-        task: 'retrieval.query',
-        dimensions: 2048
-      }),
-      signal: controller.signal
-    });
-    if (!resp.ok) {
-      const t = await resp.text().catch(() => '');
-      throw new Error(`Jina error ${resp.status}: ${t}`);
-    }
-    const json = await resp.json();
-    return json.data[0].embedding;
-  } finally {
-    clearTimeout(to);
+  const resp = await fetch('https://api.jina.ai/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${JINA_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      input: [String(text || '')],
+      model: JINA_MODEL,
+      task: 'retrieval.query',
+      dimensions: EMB_DIM
+    })
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(()=> '');
+    throw new Error(`Jina error ${resp.status}: ${t}`);
   }
-}
-
-async function embedTextCached(text){
-  const key = String(text || '').trim();
-  const hit = _embGet(key);
-  if (hit) return hit;
-  // one light retry with jitter if Jina is transiently slow
-  try {
-    const vec = await embedText(key);
-    _embSet(key, vec);
-    return vec;
-  } catch (e) {
-    // jitter 100–250ms then one more try
-    await new Promise(r => setTimeout(r, 100 + Math.floor(Math.random()*150)));
-    const vec = await embedText(key);
-    _embSet(key, vec);
-    return vec;
-  }
+  const json = await resp.json();
+  return json.data[0].embedding;
 }
 
 // ------------- Qdrant REST helpers -------------
@@ -267,6 +211,38 @@ async function vectorSearch(vector, limit = 50, filter = null) {
   const j = await r.json();
   return j.result || [];
 }
+
+// === GET /qdrantInfo — show Qdrant collection config (size, distance, status) ===
+app.get('/qdrantInfo', async (req, res) => {
+  try {
+    if (!vectorsEnabled()) {
+      return res.status(200).json({ enabled: false, reason: 'Missing QDRANT/JINA env vars' });
+    }
+    const r = await qdrantFetch(`/collections/${COLLECTION}`);
+    if (!r.ok) {
+      const t = await r.text().catch(() => '');
+      return res.status(500).json({ error: `Qdrant info failed ${r.status}: ${t}` });
+    }
+    const j = await r.json();
+    const cfg = j?.result?.config || {};
+    const params = cfg?.params || {};
+    const vectors = params?.vectors || params?.vector || null; // Qdrant may use either key
+    const out = {
+      enabled: true,
+      collection: COLLECTION,
+      status: j?.result?.status || null,
+      vectors,
+      size: vectors?.size ?? null,
+      distance: vectors?.distance ?? null,
+      model: JINA_MODEL,
+      emb_dim: EMB_DIM,
+    };
+    return res.json(out);
+  } catch (e) {
+    console.error('Error in /qdrantInfo:', e);
+    return res.status(500).json({ error: 'Failed to fetch Qdrant collection info' });
+  }
+});
 
 // --- Exact CSV tag matching helpers (for /orders strict tag search) ---
 const _normExact = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -1393,9 +1369,9 @@ app.post('/indexVectors', async (req, res) => {
         },
         body: JSON.stringify({
           input: texts,
-          model: 'jina-embeddings-v4',
+          model: JINA_MODEL,
           task: 'retrieval.passage',
-          dimensions: 2048
+          dimensions: EMB_DIM
         })
       });
       if (!resp.ok) {
@@ -1441,8 +1417,8 @@ app.post('/search', async (req, res) => {
     }
 
     await ensureCollection();
-    const vec = await timed('embed', async () => await embedTextCached(q));
-    const hits = await timed('qdrant.search', async () => await vectorSearch(vec, limit));
+    const vec = await embedText(q);
+    const hits = await vectorSearch(vec, limit);
 
     // Map results and keep semantic score
     let items = (hits || [])
@@ -1555,8 +1531,8 @@ app.get('/search', async (req, res) => {
     }
 
     await ensureCollection();
-    const vec = await timed('embed', async () => await embedTextCached(q));
-    const hits = await timed('qdrant.search', async () => await vectorSearch(vec, limit));
+    const vec = await embedText(q);
+    const hits = await vectorSearch(vec, limit);
 
     let items = (hits || [])
       .map(h => ({ ...(h.payload || {}), __score: (typeof h.score === 'number' ? h.score : 0) }))
@@ -1660,11 +1636,11 @@ app.post('/searchPaged', async (req, res) => {
     }
 
     await ensureCollection();
-    const vec = await timed('embed', async () => await embedTextCached(q));
+    const vec = await embedText(q);
 
     // Candidate pool grows with page to keep global order stable after re-rank
     const candidatesK = Math.min(1000, page * PAGE_SIZE * 2);
-    const hits = await timed('qdrant.search', async () => await vectorSearch(vec, candidatesK));
+    const hits = await vectorSearch(vec, candidatesK);
 
     // Map & dedupe by TeamName (keep highest score); fallback to stable key if TeamName missing
     let items = (hits || [])
@@ -1757,7 +1733,7 @@ app.post('/searchPaged', async (req, res) => {
 // --- Optional: warmup endpoint to mitigate cold start of Qdrant/Jina ---
 app.get('/warmup', async (req, res) => {
   try {
-    if (vectorsEnabled()) { await ensureCollection(); try { await embedTextCached('ping'); } catch (_) {} }
+    if (vectorsEnabled()) { await ensureCollection(); try { await embedText('ping'); } catch (_) {} }
     res.json({ ok: true });
   } catch (_) {
     res.json({ ok: true }); // never fail warmup
