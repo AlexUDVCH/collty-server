@@ -1982,6 +1982,16 @@ app.get('/warmup', async (req, res) => {
 
 // === SEO-friendly team helpers and routes: HTML page, JSON API, and sitemap ===
 
+// Simple HTML escaper for safe insertion into meta tags / HTML
+function escapeHtml(str = '') {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // --- Team slug helpers (mirrors frontend slugify logic) ---
 function slugifyTeamName(input=''){
   return String(input||'')
