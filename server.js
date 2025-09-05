@@ -2001,10 +2001,10 @@ function num(v){
   const n = Number(String(v).replace(/[^\d.\-]/g, ''));
   return Number.isFinite(n) ? n : 0;
 }
-function renderTeamHTML(team){
+function renderTeamHTML(team, canonicalSlug){
   const title = `${team.TeamName || 'Team'} — Collty`;
   const desc  = String(team.seoDescription || team.Textarea || [team.Type, team.Type2].filter(Boolean).join(' / ')).slice(0, 300);
-  const canonical = makeCanonicalSlugForTeam(team);
+  const canonical = canonicalSlug || makeCanonicalSlugForTeam(team);
 
   const rows = [];
   for (let i = 1; i <= 10; i++){
@@ -2195,6 +2195,48 @@ function slugifyTeamName(input=''){
     .toLowerCase();
 }
 
+// --- Slug helpers: base slug + deterministic unique slug map ---
+function baseSlugForTeam(team) {
+  const explicit = (team && team.slug) ? String(team.slug).trim() : '';
+  const byName = slugifyTeamName(team?.TeamName || '');
+  return explicit || byName || 'team';
+}
+
+// Build deterministic unique slugs for all teams (stable across runs)
+function buildSlugMaps(teams = []) {
+  // sort by stable id to make the pass order deterministic
+  const sorted = [...teams].sort((a, b) => (stableIdForOrder(a) > stableIdForOrder(b) ? 1 : -1));
+  const seen = new Set();
+  const teamBySlug = new Map();
+  const slugByStableId = new Map();
+
+  for (const t of sorted) {
+    const base = baseSlugForTeam(t);
+    let slug = base;
+    if (seen.has(slug)) {
+      // append a short deterministic suffix derived from the stable id
+      const suf = createHash('sha1').update(stableIdForOrder(t)).digest('hex').slice(0, 6);
+      slug = `${base}-${suf}`;
+      // ultra-rare edge: if even with suffix collides, extend suffix
+      let extra = 8;
+      while (seen.has(slug) && extra <= 12) {
+        slug = `${base}-${createHash('sha1').update(stableIdForOrder(t)).digest('hex').slice(0, extra)}`;
+        extra += 2;
+      }
+      if (seen.has(slug)) {
+        // final fallback (should not happen): add a numeric counter
+        let i = 2;
+        while (seen.has(`${base}-${suf}-${i}`)) i++;
+        slug = `${base}-${suf}-${i}`;
+      }
+    }
+    seen.add(slug);
+    teamBySlug.set(slug.toLowerCase(), t);
+    slugByStableId.set(stableIdForOrder(t), slug);
+  }
+  return { teamBySlug, slugByStableId };
+}
+
 async function _loadTeamsObjects() {
   const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
   const client = await auth.getClient();
@@ -2216,9 +2258,30 @@ async function _findTeamBySlug(slug) {
 // HTML page for bots and users; front-end reads window.__TEAM_SLUG__ to auto-open the card
 app.get('/team/:slug', async (req, res) => {
   try {
-    const team = await _findTeamBySlug(req.params.slug);
+    const teams = await _loadTeamsObjects();
+    const { teamBySlug, slugByStableId } = buildSlugMaps(teams);
+
+    const raw = String(req.params.slug || '').toLowerCase();
+    let team = teamBySlug.get(raw);
+
+    // Back-compat: if user entered base slug without suffix but unique exists,
+    // try to match by base and pick the first with that base
+    if (!team) {
+      const base = raw;
+      // find any slug that equals base or starts with base + '-'
+      for (const [slug, t] of teamBySlug.entries()) {
+        if (slug === base || slug.startsWith(base + '-')) { team = t; break; }
+      }
+    }
+
     if (!team) return res.status(404).send('Not found');
-    res.type('html').status(200).send(renderTeamHTML(team));
+
+    const canonical = slugByStableId.get(stableIdForOrder(team)) || baseSlugForTeam(team);
+    // Hard canonicalization: if requested slug is not the canonical one, redirect permanently
+    if (String(req.params.slug || '').toLowerCase() !== String(canonical).toLowerCase()) {
+      return res.redirect(301, `/team/${canonical}`);
+    }
+    res.type('html').status(200).send(renderTeamHTML(team, canonical));
   } catch (e) {
     console.error('SEO /team/:slug error:', e);
     res.status(500).send('Server error');
@@ -2228,9 +2291,20 @@ app.get('/team/:slug', async (req, res) => {
 // JSON API to fetch one team by slug (used when user lands directly on /team/:slug)
 app.get('/api/team/:slug', async (req, res) => {
   try {
-    const team = await _findTeamBySlug(req.params.slug);
+    const teams = await _loadTeamsObjects();
+    const { teamBySlug, slugByStableId } = buildSlugMaps(teams);
+
+    const raw = String(req.params.slug || '').toLowerCase();
+    let team = teamBySlug.get(raw);
+    if (!team) {
+      const base = raw;
+      for (const [slug, t] of teamBySlug.entries()) {
+        if (slug === base || slug.startsWith(base + '-')) { team = t; break; }
+      }
+    }
     if (!team) return res.status(404).json({ error: 'Not found' });
-    const canonical = makeCanonicalSlugForTeam(team);
+
+    const canonical = slugByStableId.get(stableIdForOrder(team)) || baseSlugForTeam(team);
     res.json({ ...team, slug: canonical });
   } catch (e) {
     console.error('/api/team/:slug error:', e);
@@ -2242,7 +2316,8 @@ app.get('/api/team/:slug', async (req, res) => {
 app.get('/sitemap.xml', async (req, res) => {
   try {
     const teams = await _loadTeamsObjects();
-    const urls = teams.map(t => `https://collty.com/team/${makeCanonicalSlugForTeam(t)}`);
+    const { slugByStableId } = buildSlugMaps(teams);
+    const urls = teams.map(t => `https://collty.com/team/${slugByStableId.get(stableIdForOrder(t)) || baseSlugForTeam(t)}`);
     res.type('application/xml').send(
 `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -2252,6 +2327,16 @@ ${urls.map(u => `<url><loc>${u}</loc></url>`).join('\n')}
     console.error('sitemap.xml error:', e);
     res.status(500).send('Failed to build sitemap');
   }
+});
+
+// --- robots.txt ---
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send(
+`User-agent: *
+Allow: /
+
+Sitemap: https://collty.com/sitemap.xml`
+  );
 });
 
 app.use((req, res) => {
