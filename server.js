@@ -1980,7 +1980,35 @@ app.get('/warmup', async (req, res) => {
 });
 
 
-// === SEO-friendly team routes: HTML page, JSON API, and sitemap ===
+// === SEO-friendly team helpers and routes: HTML page, JSON API, and sitemap ===
+
+// --- Team slug helpers (mirrors frontend slugify logic) ---
+function slugifyTeamName(input=''){
+  return String(input||'')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^A-Za-z0-9]+/g,'-')
+    .replace(/^-+|-+$/g,'')
+    .toLowerCase();
+}
+
+async function _loadTeamsObjects() {
+  const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
+  const client = await auth.getClient();
+  const sheets = google.sheets({ version: 'v4', auth: client });
+  const rows = await fetchSheetWithRetry(sheets, `${sheetOrders}!A1:ZZ1000`);
+  return rowsToOrders(rows);
+}
+
+function makeCanonicalSlugForTeam(team) {
+  return team.slug ? String(team.slug) : slugifyTeamName(team.TeamName || '');
+}
+
+async function _findTeamBySlug(slug) {
+  const teams = await _loadTeamsObjects();
+  const lower = String(slug||'').toLowerCase();
+  return teams.find(t => makeCanonicalSlugForTeam(t).toLowerCase() === lower);
+}
 
 // HTML page for bots and users; front-end reads window.__TEAM_SLUG__ to auto-open the card
 app.get('/team/:slug', async (req, res) => {
