@@ -1992,6 +1992,199 @@ function escapeHtml(str = '') {
     .replace(/'/g, '&#39;');
 }
 
+function fmtMoney(v){
+  const n = Number(String(v).replace(/[^\d.\-]/g, ''));
+  if (!Number.isFinite(n)) return '';
+  return `$${Math.round(n).toLocaleString('en-US')}`;
+}
+function num(v){
+  const n = Number(String(v).replace(/[^\d.\-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+function renderTeamHTML(team){
+  const title = `${team.TeamName || 'Team'} — Collty`;
+  const desc  = String(team.seoDescription || team.Textarea || [team.Type, team.Type2].filter(Boolean).join(' / ')).slice(0, 300);
+  const canonical = makeCanonicalSlugForTeam(team);
+
+  const rows = [];
+  for (let i = 1; i <= 10; i++){
+    const role = team[`sp${i}`];
+    const hours = team[`hours${i}`] ?? team[`Hours${i}`] ?? '';
+    const rate  = team[`rate${i}`]  ?? team[`Rate${i}`]  ?? '';
+    const qty   = team[`quantity${i}`] ?? team[`Quantity${i}`] ?? '';
+    const cost  = team[`summ${i}`]  ?? team[`Summ${i}`]  ?? team[`cost${i}`] ?? '';
+    if (role || hours || rate || qty || cost) {
+      rows.push({
+        role: String(role||'').trim(),
+        hours: num(hours),
+        rate:  num(rate),
+        qty:   num(qty) || null,
+        cost:  num(cost)
+      });
+    }
+  }
+
+  let total = 0;
+  const rowsHTML = rows.map(r => {
+    const calc = r.cost || (r.hours * r.rate * (r.qty || 1));
+    total += calc || 0;
+    return `
+      <tr>
+        <td>${escapeHtml(r.role || '')}</td>
+        <td class="num">${r.hours || ''}</td>
+        <td class="num">${r.rate ? fmtMoney(r.rate) : ''}</td>
+        <td class="num">${r.qty ?? ''}</td>
+        <td class="num">${fmtMoney(calc)}</td>
+      </tr>`;
+  }).join('');
+
+  const tags = []
+    .concat(String(team.Type||'').split(','))
+    .concat(String(team.Type2||'').split(','))
+    .map(s=>s.trim()).filter(Boolean);
+
+  const ld = {
+    "@context":"https://schema.org",
+    "@type":"Service",
+    "name": team.TeamName,
+    "description": desc,
+    "category": [team.Type, team.Type2].filter(Boolean).join(' / '),
+    "brand": "Collty",
+    "offers": {
+      "@type":"AggregateOffer",
+      "priceCurrency":"USD",
+      "lowPrice": total ? Math.round(total) : undefined
+    },
+    "url": `https://collty.com/team/${canonical}`
+  };
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(title)}</title>
+  <meta name="description" content="${escapeHtml(desc)}">
+  <link rel="canonical" href="https://collty.com/team/${canonical}">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="${escapeHtml(title)}">
+  <meta property="og:description" content="${escapeHtml(desc)}">
+  <meta property="og:url" content="https://collty.com/team/${canonical}">
+  <meta property="og:type" content="website">
+  <script type="application/ld+json">${JSON.stringify(ld)}</script>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root{--bg:#0f1115;--card:#171a21;--muted:#9aa4b2;--text:#e6e8ec;--chip:#223;--chip-bd:#2a3240;--bd:#273042;--acc:#4ade80}
+    body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu}
+    .wrap{max-width:980px;margin:24px auto;padding:0 16px}
+    .card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+    h1{font-size:22px;margin:0 0 6px}
+    .muted{color:var(--muted)}
+    .badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    .badge{border:1px solid var(--chip-bd);background:var(--chip);padding:6px 10px;border-radius:999px;font-size:12px}
+    table{width:100%;border-collapse:separate;border-spacing:0 10px;margin-top:18px}
+    th,td{padding:12px 14px;background:#111726}
+    th{color:var(--muted);text-align:left;font-weight:600;background:#0e1522}
+    tr td:first-child, tr th:first-child { border-top-left-radius:12px;border-bottom-left-radius:12px}
+    tr td:last-child, tr th:last-child { border-top-right-radius:12px;border-bottom-right-radius:12px}
+    .num{text-align:right;white-space:nowrap}
+    .total{display:flex;justify-content:flex-end;margin-top:8px;font-size:15px}
+    .total b{margin-left:10px}
+    .topline{display:flex;justify-content:space-between;gap:16px;align-items:center}
+    .pill{background:#0d1a10;border:1px solid #173c21;color:#9be8b5;padding:4px 8px;border-radius:8px;font-size:12px}
+    a{color:#9ecbff;text-decoration:none}
+    .cta{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #2a3240;background:#1b2232;color:#e6e8ec;cursor:pointer}
+    .btn.primary{background:#142b1b;border-color:#1e5a2c;color:#bdf4cf}
+    form.inline{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    input,textarea{background:#0e1522;border:1px solid #2a3240;border-radius:10px;color:#e6e8ec;padding:10px;font-size:14px}
+    input::placeholder,textarea::placeholder{color:#6e7683}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="topline">
+        <div>
+          <div class="muted">Team</div>
+          <h1>${escapeHtml(team.TeamName || 'Team')}</h1>
+        </div>
+        ${ total ? `<div class="pill">Est. total&nbsp;≈&nbsp;<b>${fmtMoney(total)}</b></div>` : '' }
+      </div>
+
+      <div style="margin-top:12px">
+        <div class="muted">Project types</div>
+        <div class="badges">
+          ${String(team.Type||'').split(',').map(s=>s.trim()).filter(Boolean).map(s=>`<span class="badge">${escapeHtml(s)}</span>`).join('')}
+        </div>
+      </div>
+
+      <div style="margin-top:12px">
+        <div class="muted">Industry Expertise</div>
+        <div class="badges">
+          ${String(team.Type2||'').split(',').map(s=>s.trim()).filter(Boolean).map(s=>`<span class="badge">${escapeHtml(s)}</span>`).join('')}
+        </div>
+      </div>
+
+      ${tags.length ? `<div style="margin-top:12px" class="badges">
+        ${tags.map(t=>`<span class="badge">${escapeHtml(t)}</span>`).join('')}
+      </div>` : ''}
+
+      ${rows.length ? `
+        <table>
+          <thead>
+            <tr>
+              <th>Specialist</th>
+              <th class="num">Hours</th>
+              <th class="num">Rate ($/h)</th>
+              <th class="num">Qty</th>
+              <th class="num">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHTML}
+          </tbody>
+        </table>
+        ${ total ? `<div class="total muted">Total:&nbsp;&nbsp;<b>${fmtMoney(total)}</b></div>` : '' }
+      ` : ''}
+
+      <div class="cta">
+        <a class="btn" href="https://collty.com">← Back</a>
+        <button class="btn primary" id="cta-contact">Contact team</button>
+      </div>
+
+      <form class="inline" id="contact-form" method="post" action="/addOrder" style="display:none">
+        <input type="hidden" name="teamName" value="${escapeHtml(team.TeamName || '')}">
+        <input type="hidden" name="Type" value="${escapeHtml(team.Type || '')}">
+        <input type="hidden" name="Type2" value="${escapeHtml(team.Type2 || '')}">
+        <input name="name" placeholder="Your name" required>
+        <input name="email" placeholder="Email" type="email" required>
+        <textarea name="Textarea" placeholder="Describe your needs" rows="3" style="flex:1 1 100%"></textarea>
+        <button class="btn primary" type="submit">Send</button>
+      </form>
+    </div>
+
+    <div style="margin:16px 2px" class="muted">
+      <a href="https://collty.com">← Back to Collty</a>
+    </div>
+  </div>
+
+  <script>
+    // Progressive enhancement: show form on CTA, and let frontend hydrate if /static/app.js exists
+    document.addEventListener('click', function(e){
+      const btn = e.target.closest('#cta-contact');
+      if (btn){ 
+        e.preventDefault(); 
+        const f = document.getElementById('contact-form'); 
+        if (f) f.style.display = 'flex'; 
+      }
+    });
+    window.__TEAM_SLUG__=${JSON.stringify(canonical)};
+  </script>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>`;
+}
+
 // --- Team slug helpers (mirrors frontend slugify logic) ---
 function slugifyTeamName(input=''){
   return String(input||'')
@@ -2025,38 +2218,7 @@ app.get('/team/:slug', async (req, res) => {
   try {
     const team = await _findTeamBySlug(req.params.slug);
     if (!team) return res.status(404).send('Not found');
-
-    const canonical = makeCanonicalSlugForTeam(team);
-    const title = `${team.TeamName || 'Team'} — Collty`;
-    const desc  = String(team.seoDescription || team.Textarea || [team.Type, team.Type2].filter(Boolean).join(' / ')).slice(0, 300);
-
-    res.type('html').status(200).send(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>${escapeHtml(title)}</title>
-  <meta name="description" content="${escapeHtml(desc)}">
-  <link rel="canonical" href="https://collty.com/team/${canonical}">
-  <meta name="robots" content="index,follow">
-  <meta property="og:title" content="${escapeHtml(title)}">
-  <meta property="og:description" content="${escapeHtml(desc)}">
-  <meta property="og:url" content="https://collty.com/team/${canonical}">
-  <meta property="og:type" content="website">
-  <script type="application/ld+json">${JSON.stringify({
-    "@context":"https://schema.org","@type":"Service",
-    "name": team.TeamName,
-    "description": desc,
-    "category": [team.Type, team.Type2].filter(Boolean).join(' / '),
-    "brand": "Collty",
-    "url": `https://collty.com/team/${canonical}`
-  })}</script>
-</head>
-<body>
-  <div id="app"></div>
-  <script>window.__TEAM_SLUG__=${JSON.stringify(canonical)};</script>
-  <script src="/static/app.js"></script>
-</body>
-</html>`);
+    res.type('html').status(200).send(renderTeamHTML(team));
   } catch (e) {
     console.error('SEO /team/:slug error:', e);
     res.status(500).send('Server error');
