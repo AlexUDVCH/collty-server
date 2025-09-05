@@ -1979,6 +1979,81 @@ app.get('/warmup', async (req, res) => {
   }
 });
 
+
+// === SEO-friendly team routes: HTML page, JSON API, and sitemap ===
+
+// HTML page for bots and users; front-end reads window.__TEAM_SLUG__ to auto-open the card
+app.get('/team/:slug', async (req, res) => {
+  try {
+    const team = await _findTeamBySlug(req.params.slug);
+    if (!team) return res.status(404).send('Not found');
+
+    const canonical = makeCanonicalSlugForTeam(team);
+    const title = `${team.TeamName || 'Team'} — Collty`;
+    const desc  = String(team.seoDescription || team.Textarea || [team.Type, team.Type2].filter(Boolean).join(' / ')).slice(0, 300);
+
+    res.type('html').status(200).send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(title)}</title>
+  <meta name="description" content="${escapeHtml(desc)}">
+  <link rel="canonical" href="https://collty.com/team/${canonical}">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="${escapeHtml(title)}">
+  <meta property="og:description" content="${escapeHtml(desc)}">
+  <meta property="og:url" content="https://collty.com/team/${canonical}">
+  <meta property="og:type" content="website">
+  <script type="application/ld+json">${JSON.stringify({
+    "@context":"https://schema.org","@type":"Service",
+    "name": team.TeamName,
+    "description": desc,
+    "category": [team.Type, team.Type2].filter(Boolean).join(' / '),
+    "brand": "Collty",
+    "url": `https://collty.com/team/${canonical}`
+  })}</script>
+</head>
+<body>
+  <div id="app"></div>
+  <script>window.__TEAM_SLUG__=${JSON.stringify(canonical)};</script>
+  <script src="/static/app.js"></script>
+</body>
+</html>`);
+  } catch (e) {
+    console.error('SEO /team/:slug error:', e);
+    res.status(500).send('Server error');
+  }
+});
+
+// JSON API to fetch one team by slug (used when user lands directly on /team/:slug)
+app.get('/api/team/:slug', async (req, res) => {
+  try {
+    const team = await _findTeamBySlug(req.params.slug);
+    if (!team) return res.status(404).json({ error: 'Not found' });
+    const canonical = makeCanonicalSlugForTeam(team);
+    res.json({ ...team, slug: canonical });
+  } catch (e) {
+    console.error('/api/team/:slug error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Sitemap enumerating all team pages for fast discovery by crawlers
+app.get('/sitemap.xml', async (req, res) => {
+  try {
+    const teams = await _loadTeamsObjects();
+    const urls = teams.map(t => `https://collty.com/team/${makeCanonicalSlugForTeam(t)}`);
+    res.type('application/xml').send(
+`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urls.map(u => `<url><loc>${u}</loc></url>`).join('\n')}
+</urlset>`);
+  } catch (e) {
+    console.error('sitemap.xml error:', e);
+    res.status(500).send('Failed to build sitemap');
+  }
+});
+
 app.use((req, res) => {
   console.warn('[404]', req.method, req.originalUrl);
   res.status(404).send('Not Found');
