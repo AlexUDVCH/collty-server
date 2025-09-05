@@ -2312,17 +2312,42 @@ app.get('/api/team/:slug', async (req, res) => {
   }
 });
 
-// Sitemap enumerating all team pages for fast discovery by crawlers
+// Sitemap enumerating all site pages (static pages + all team pages)
 app.get('/sitemap.xml', async (req, res) => {
   try {
+    // 1) Static pages you want indexed (edit this list as needed)
+    const STATIC_PAGES = [
+      'https://collty.com/',
+      'https://collty.com/about',
+      'https://collty.com/partnership',
+    ];
+
+    // 2) Dynamic team pages from Google Sheets
     const teams = await _loadTeamsObjects();
     const { slugByStableId } = buildSlugMaps(teams);
-    const urls = teams.map(t => `https://collty.com/team/${slugByStableId.get(stableIdForOrder(t)) || baseSlugForTeam(t)}`);
-    res.type('application/xml').send(
+    const teamUrls = teams.map(t =>
+      `https://collty.com/team/${slugByStableId.get(stableIdForOrder(t)) || baseSlugForTeam(t)}`
+    );
+
+    // 3) Merge + de-duplicate while preserving order (static first)
+    const seen = new Set();
+    const urls = [];
+    for (const u of [...STATIC_PAGES, ...teamUrls]) {
+      if (!u) continue;
+      if (!seen.has(u)) {
+        seen.add(u);
+        urls.push(u);
+      }
+    }
+
+    // 4) Emit a simple URL set (you can extend with <lastmod> later)
+    const body =
 `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${urls.map(u => `<url><loc>${u}</loc></url>`).join('\n')}
-</urlset>`);
+</urlset>`;
+
+    res.type('application/xml').send(body);
   } catch (e) {
     console.error('sitemap.xml error:', e);
     res.status(500).send('Failed to build sitemap');
