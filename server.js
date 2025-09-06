@@ -2340,14 +2340,30 @@ function _extractLocsFromXml(xml) {
 function _extractTpostFromHtml(html) {
   if (!html) return [];
   const out = new Set();
-  // naive anchor capture of /tpost/... links
-  const re = /href\s*=\s*"([^"]+)"/gi;
-  let m; while ((m = re.exec(html))) {
-    const href = m[1];
-    if (/\/tpost\//.test(href)) {
-      const abs = href.startsWith('http') ? href : `https://collty.com${href.startsWith('/') ? '' : '/'}${href}`;
-      out.add(abs);
+  // Capture href="...", href='...' and href=unquoted
+  const re = /href\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const href = (m[1] || m[2] || m[3] || '').trim();
+    if (!href) continue;
+    if (/\/tpost\//i.test(href)) {
+      const abs = href.startsWith('http')
+        ? href
+        : `https://collty.com${href.startsWith('/') ? '' : '/'}${href}`;
+      out.add(abs.replace(/\/$/, '')); // normalize trailing slash
     }
+  }
+  return Array.from(out);
+}
+function _extractLinksFromRss(xml) {
+  if (!xml) return [];
+  const out = new Set();
+  // Standard RSS: <item><link>https://collty.com/tpost/...</link></item>
+  const re = /<link>\s*([^<]+?)\s*<\/link>/gi;
+  let m;
+  while ((m = re.exec(xml))) {
+    const url = (m[1] || '').trim();
+    if (/\/tpost\//i.test(url)) out.add(url.replace(/\/$/, ''));
   }
   return Array.from(out);
 }
@@ -2378,6 +2394,24 @@ async function _autoDiscoverTildaPosts() {
     if (locs.length) { urls = locs; break; }
   }
 
+  // Fallback #2: try RSS feed(s) if sitemap with tpost links not found
+  if (!urls.length) {
+    const rssCandidates = [
+      process.env.TILDA_RSS_URL,
+      'https://collty.com/rss.xml',
+      'https://collty.com/rss',
+      'https://collty.com/rss-feed-114489169791.xml' // known feed id in this project
+    ].filter(Boolean);
+
+    for (const u of rssCandidates) {
+      // eslint-disable-next-line no-await-in-loop
+      const xml = await _fetchText(u);
+      if (!xml) continue;
+      const locs = _extractLinksFromRss(xml);
+      if (locs.length) { urls = locs; break; }
+    }
+  }
+
   // Fallback: crawl a few public pages and scrape /tpost/ anchors
   if (!urls.length) {
     const seeds = [
@@ -2389,7 +2423,8 @@ async function _autoDiscoverTildaPosts() {
     for (const s of seeds) {
       // eslint-disable-next-line no-await-in-loop
       const html = await _fetchText(s);
-      _extractTpostFromHtml(html).forEach(u => found.add(u));
+      const links = _extractTpostFromHtml(html);
+      links.forEach(u => found.add(String(u).replace(/\/$/, '')));
       if (found.size >= 200) break; // guard
     }
     urls = Array.from(found);
