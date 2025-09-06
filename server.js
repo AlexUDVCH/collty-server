@@ -2003,7 +2003,12 @@ function num(v){
 }
 function renderTeamHTML(team, canonicalSlug){
   const title = `${team.TeamName || 'Team'} — Collty`;
-  const desc  = String(team.seoDescription || team.Textarea || [team.Type, team.Type2].filter(Boolean).join(' / ')).slice(0, 300);
+  const desc  = String(
+    team.seoDescription
+    || team.X1Q
+    || team.Textarea
+    || [team.Type, team.Type2].filter(Boolean).join(' / ')
+  ).slice(0, 300);
   const canonical = canonicalSlug || makeCanonicalSlugForTeam(team);
 
   const rows = [];
@@ -2312,6 +2317,89 @@ app.get('/api/team/:slug', async (req, res) => {
   }
 });
 
+// --- Auto-discovery of Tilda blog URLs with simple in-memory cache ---
+const _tildaAutoCache = { urls: [], ts: 0 };
+const TILDA_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+async function _fetchText(url) {
+  try {
+    const r = await fetch(url, { method: 'GET' });
+    if (!r.ok) return null;
+    return await r.text();
+  } catch (_) { return null; }
+}
+
+function _extractLocsFromXml(xml) {
+  if (!xml) return [];
+  const out = [];
+  const re = /<loc>\s*([^<]+)\s*<\/loc>/gi;
+  let m; while ((m = re.exec(xml))) { out.push(m[1].trim()); }
+  return out;
+}
+
+function _extractTpostFromHtml(html) {
+  if (!html) return [];
+  const out = new Set();
+  // naive anchor capture of /tpost/... links
+  const re = /href\s*=\s*"([^"]+)"/gi;
+  let m; while ((m = re.exec(html))) {
+    const href = m[1];
+    if (/\/tpost\//.test(href)) {
+      const abs = href.startsWith('http') ? href : `https://collty.com${href.startsWith('/') ? '' : '/'}${href}`;
+      out.add(abs);
+    }
+  }
+  return Array.from(out);
+}
+
+async function _autoDiscoverTildaPosts() {
+  const nowTs = Date.now();
+  if (_tildaAutoCache.urls.length && (nowTs - _tildaAutoCache.ts) < TILDA_CACHE_TTL_MS) {
+    return _tildaAutoCache.urls;
+  }
+
+  const candidates = [
+    process.env.TILDA_SITEMAP_URL,
+    'https://collty.com/tilda-sitemap.xml',
+    'https://collty.com/sitemap_tilda.xml',
+    'https://collty.com/sitemap-blog.xml',
+    // As a last resort, try the root sitemap (guarded below to avoid loops)
+    'https://collty.com/sitemap.xml'
+  ].filter(Boolean);
+
+  let urls = [];
+  for (const u of candidates) {
+    // avoid self-recursion: skip our own sitemap endpoint path (exact match)
+    if (u === 'https://collty.com/sitemap.xml') continue;
+    // eslint-disable-next-line no-await-in-loop
+    const xml = await _fetchText(u);
+    if (!xml) continue;
+    const locs = _extractLocsFromXml(xml).filter(x => /\/tpost\//.test(x));
+    if (locs.length) { urls = locs; break; }
+  }
+
+  // Fallback: crawl a few public pages and scrape /tpost/ anchors
+  if (!urls.length) {
+    const seeds = [
+      'https://collty.com/',
+      'https://collty.com/tpost/',
+      'https://collty.com/blog',
+    ];
+    const found = new Set();
+    for (const s of seeds) {
+      // eslint-disable-next-line no-await-in-loop
+      const html = await _fetchText(s);
+      _extractTpostFromHtml(html).forEach(u => found.add(u));
+      if (found.size >= 200) break; // guard
+    }
+    urls = Array.from(found);
+  }
+
+  _tildaAutoCache.urls = urls;
+  _tildaAutoCache.ts = nowTs;
+  return urls;
+}
+
 // Sitemap enumerating all site pages (static pages + all team pages)
 app.get('/sitemap.xml', async (req, res) => {
   try {
@@ -2322,25 +2410,30 @@ app.get('/sitemap.xml', async (req, res) => {
       'https://collty.com/partnership',
     ];
 
-    // 2) Dynamic team pages from Google Sheets
+    // 2) Auto-discovered Tilda blog posts (/tpost/...)
+    const blogAuto = await _autoDiscoverTildaPosts();
+
+    // 3) Dynamic team pages from Google Sheets
     const teams = await _loadTeamsObjects();
     const { slugByStableId } = buildSlugMaps(teams);
     const teamUrls = teams.map(t =>
       `https://collty.com/team/${slugByStableId.get(stableIdForOrder(t)) || baseSlugForTeam(t)}`
     );
 
-    // 3) Merge + de-duplicate while preserving order (static first)
+    // 4) Merge + de-duplicate while preserving order (static → blog(auto) → teams)
     const seen = new Set();
     const urls = [];
-    for (const u of [...STATIC_PAGES, ...teamUrls]) {
-      if (!u) continue;
-      if (!seen.has(u)) {
-        seen.add(u);
-        urls.push(u);
+    function pushUnique(list) {
+      for (const u of list) {
+        if (!u) continue;
+        const norm = String(u).replace(/\/$/, '');
+        if (!seen.has(norm)) { seen.add(norm); urls.push(norm); }
       }
     }
+    pushUnique(STATIC_PAGES);
+    pushUnique(blogAuto);
+    pushUnique(teamUrls);
 
-    // 4) Emit a simple URL set (you can extend with <lastmod> later)
     const body =
 `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
