@@ -2415,18 +2415,18 @@ app.get('/teams', async (req, res) => {
     const end = Math.min(start + size, total);
     const slice = start < end ? list.slice(start, end) : [];
 
-    const prev = page > 1 ? `/teams?page=${page - 1}&amp;size=${size}` : null;
-    const next = end < total ? `/teams?page=${page + 1}&amp;size=${size}` : null;
+    const prev = page > 1 ? `/teams?page=${page - 1}&size=${size}` : null;
+    const next = end < total ? `/teams?page=${page + 1}&size=${size}` : null;
 
-    const html = `&lt;!doctype html&gt;
-  &lt;html lang="en"&gt;
-  &lt;head&gt;
-    &lt;meta charset="utf-8"&gt;
-    &lt;title&gt;Teams — Collty&lt;/title&gt;
-    &lt;meta name="robots" content="index,follow"&gt;
-    &lt;link rel="canonical" href="https://collty.com/teams"&gt;
-    &lt;meta name="viewport" content="width=device-width,initial-scale=1"&gt;
-    &lt;style&gt;
+    const html = `<!doctype html>
+  <html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Teams — Collty</title>
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://collty.com/teams">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>
       body{margin:0;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;background:#0f1115;color:#e6e8ec}
       .wrap{max-width:980px;margin:24px auto;padding:0 16px}
       a{color:#9ecbff;text-decoration:none}
@@ -2436,23 +2436,23 @@ app.get('/teams', async (req, res) => {
       nav{display:flex;gap:10px;margin:14px 0}
       .btn{padding:8px 12px;border:1px solid #2a3240;border-radius:8px;background:#1b2232;color:#e6e8ec}
       .btn[disabled]{opacity:.5}
-    &lt;/style&gt;
-  &lt;/head&gt;
-  &lt;body&gt;
-    &lt;div class="wrap"&gt;
-      &lt;h1&gt;All Teams&lt;/h1&gt;
-      &lt;div class="muted"&gt;Total: ${total}. Page ${page} of ${Math.max(1, Math.ceil(total / size))}.&lt;/div&gt;
-      &lt;ul&gt;
-        ${slice.map(it =&gt; `&lt;li&gt;&lt;a href="/team/${it.slug}"&gt;${escapeHtml(it.name)}&lt;/a&gt;&lt;/li&gt;`).join('')}
-      &lt;/ul&gt;
-      &lt;nav&gt;
-        ${prev ? `&lt;a class="btn" href="${prev}"&gt;← Prev&lt;/a&gt;` : `&lt;button class="btn" disabled&gt;← Prev&lt;/button&gt;`}
-        ${next ? `&lt;a class="btn" href="${next}"&gt;Next →&lt;/a&gt;` : `&lt;button class="btn" disabled&gt;Next →&lt;/button&gt;`}
-      &lt;/nav&gt;
-      &lt;div class="muted"&gt;&lt;a href="/"&gt;← Back to Collty&lt;/a&gt;&lt;/div&gt;
-    &lt;/div&gt;
-  &lt;/body&gt;
-  &lt;/html&gt;`;
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>All Teams</h1>
+      <div class="muted">Total: ${total}. Page ${page} of ${Math.max(1, Math.ceil(total / size))}.</div>
+      <ul>
+        ${slice.map(it => `<li><a href="/team/${it.slug}">${escapeHtml(it.name)}</a></li>`).join('')}
+      </ul>
+      <nav>
+        ${prev ? `<a class="btn" href="${prev}">← Prev</a>` : `<button class="btn" disabled>← Prev</button>`}
+        ${next ? `<a class="btn" href="${next}">Next →</a>` : `<button class="btn" disabled>Next →</button>`}
+      </nav>
+      <div class="muted"><a href="/">← Back to Collty</a></div>
+    </div>
+  </body>
+  </html>`;
 
     res.set('Cache-Control', 'public, max-age=300, must-revalidate');
     res.type('html').status(200).send(html);
