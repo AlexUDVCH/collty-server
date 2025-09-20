@@ -2522,9 +2522,13 @@ app.get('/sitemap.xml', async (req, res) => {
     const seen = new Set();
     const urls = [];
     function pushUnique(list) {
-      for (const u of list) {
+      for (let u of list) {
         if (!u) continue;
-        const norm = String(u).replace(/\/$/, '');
+        // Remove any whitespace (including newlines) accidentally included in source lists
+        let s = String(u).replace(/\s+/g, '');
+        // Unescape common HTML entity just in case feeds provide &amp;
+        s = s.replace(/&amp;/g, '&').trim();
+        const norm = s.replace(/\/$/, '');
         if (!seen.has(norm)) { seen.add(norm); urls.push(norm); }
       }
     }
@@ -2538,6 +2542,8 @@ app.get('/sitemap.xml', async (req, res) => {
 ${urls.map(u => `<url><loc>${u}</loc></url>`).join('\n')}
 </urlset>`;
 
+    res.set('Cache-Control', 'public, max-age=300, must-revalidate');
+    res.set('Vary', 'Accept-Encoding');
     res.type('application/xml').send(body);
   } catch (e) {
     console.error('sitemap.xml error:', e);
