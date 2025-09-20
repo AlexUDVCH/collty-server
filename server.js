@@ -70,6 +70,41 @@ app.get('/', (req, res) => {
   res.send('✅ Server is running');
 });
 
+// === SITEMAP (no line breaks inside <loc>) ===
+function buildSitemapXml(urls) {
+  const header = '<?xml version="1.0" encoding="UTF-8"?>\n';
+  const open = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n';
+  const body = urls
+    .filter(Boolean)
+    .map(u => `  <url><loc>${String(u).trim()}</loc></url>`) // single-line <loc>
+    .join('\n');
+  const close = '\n</urlset>';
+  return header + open + body + close;
+}
+
+app.get('/sitemap.xml', async (req, res) => {
+  try {
+    // TODO: replace/extend with your dynamic list if needed
+    const urls = [
+      'https://collty.com',
+      'https://collty.com/about',
+      'https://collty.com/partnership',
+      'https://collty.com/tpost/vflg5kmre1-how-remote-teams-are-driving-business-gr',
+      'https://collty.com/tpost/3y88bbbl31-remote-teams-with-ai-not-only-cost-reduc',
+      'https://collty.com/tpost/nol9jhrsz1-common-outsourced-business-processes',
+      'https://collty.com/tpost/fl45g5r4a1-collty-starts-testing-phase-for-services',
+    ];
+
+    res.set('Content-Type', 'application/xml');
+    // optional: caching for bots; keep short while debugging
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.send(buildSitemapXml(urls));
+  } catch (e) {
+    console.error('sitemap error:', e);
+    res.status(500).send('');
+  }
+});
+
 // === SIMPLE IN-MEMORY CACHE for leads/orders ===
 const CACHE_TTL = 15 * 1000; // 15 seconds
 let cacheLeads = { data: null, ts: 0 };
