@@ -2064,14 +2064,38 @@ function num(v){
   const n = Number(String(v).replace(/[^\d.\-]/g, ''));
   return Number.isFinite(n) ? n : 0;
 }
+// Build a meta description of ~165 chars, ending on a sentence/word boundary
+function makeMetaDescription(input, limit = 165) {
+  const txt = String(input || '')
+    .replace(/<[^>]*>/g, ' ')        // strip HTML just in case
+    .replace(/\s+/g, ' ')           // collapse whitespace
+    .trim();
+
+  if (txt.length <= limit) return txt;
+
+  const cut = txt.slice(0, limit);
+  // Prefer ending at a sentence boundary if it's at least halfway through
+  let endIdx = Math.max(cut.lastIndexOf('.'), cut.lastIndexOf('!'), cut.lastIndexOf('?'));
+  if (endIdx !== -1 && endIdx >= Math.floor(limit * 0.5)) {
+    return cut.slice(0, endIdx + 1).trim();
+  }
+  // Otherwise cut at the last space to avoid mid-word truncation
+  const spaceIdx = cut.lastIndexOf(' ');
+  if (spaceIdx > 50) {
+    return cut.slice(0, spaceIdx).trim() + '…';
+  }
+  // Fallback: hard cut with ellipsis
+  return cut.trim() + '…';
+}
 function renderTeamHTML(team, canonicalSlug){
   const title = `${team.TeamName || 'Team'} — Collty`;
-  const desc  = String(
+  const rawDesc = String(
     team.seoDescription
     || team.X1Q
     || team.Textarea
     || [team.Type, team.Type2].filter(Boolean).join(' / ')
-  ).slice(0, 300);
+  );
+  const desc = makeMetaDescription(rawDesc, 165);
   const canonical = canonicalSlug || makeCanonicalSlugForTeam(team);
 
   const rows = [];
