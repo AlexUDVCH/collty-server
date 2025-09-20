@@ -2125,6 +2125,15 @@ function renderTeamHTML(team, canonicalSlug){
     },
     "url": `https://collty.com/team/${canonical}`
   };
+  const bc = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://collty.com/" },
+      { "@type": "ListItem", "position": 2, "name": "Teams", "item": "https://collty.com/teams" },
+      { "@type": "ListItem", "position": 3, "name": String(team.TeamName || 'Team'), "item": `https://collty.com/team/${canonical}` }
+    ]
+  };
 
   return `<!doctype html>
 <html lang="en">
@@ -2139,6 +2148,7 @@ function renderTeamHTML(team, canonicalSlug){
   <meta property="og:url" content="https://collty.com/team/${canonical}">
   <meta property="og:type" content="website">
   <script type="application/ld+json">${JSON.stringify(ld)}</script>
+  <script type="application/ld+json">${JSON.stringify(bc)}</script>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     :root{--bg:#0f1115;--card:#171a21;--muted:#9aa4b2;--text:#e6e8ec;--chip:#223;--chip-bd:#2a3240;--bd:#273042;--acc:#4ade80}
@@ -2166,6 +2176,7 @@ function renderTeamHTML(team, canonicalSlug){
     form.inline{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
     input,textarea{background:#0e1522;border:1px solid #2a3240;border-radius:10px;color:#e6e8ec;padding:10px;font-size:14px}
     input::placeholder,textarea::placeholder{color:#6e7683}
+    .lead{margin:8px 0 8px;color:#cbd5e1;font-size:16px;line-height:1.5}
   </style>
 </head>
 <body>
@@ -2178,6 +2189,8 @@ function renderTeamHTML(team, canonicalSlug){
         </div>
         ${ total ? `<div class="pill">Est. total&nbsp;≈&nbsp;<b>${fmtMoney(total)}</b></div>` : '' }
       </div>
+
+      <p class="lead">${escapeHtml(desc)}</p>
 
       <div style="margin-top:12px">
         <div class="muted">Project types</div>
@@ -2377,6 +2390,75 @@ app.get('/api/team/:slug', async (req, res) => {
   } catch (e) {
     console.error('/api/team/:slug error:', e);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- Static catalog of teams with real anchors for crawlers and users ---
+app.get('/teams', async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page || 1));
+    const size = Math.min(200, Math.max(10, Number(req.query.size || 100)));
+    const teams = await _loadTeamsObjects();
+    const { slugByStableId } = buildSlugMaps(teams);
+
+    // Build list of {name, slug}
+    const list = teams.map(t => ({
+      name: String(t.TeamName || 'Team').trim() || 'Team',
+      slug: slugByStableId.get(stableIdForOrder(t)) || baseSlugForTeam(t)
+    }));
+
+    // Deterministic order by name then slug
+    list.sort((a, b) => a.name.localeCompare(b.name) || a.slug.localeCompare(b.slug));
+
+    const total = list.length;
+    const start = (page - 1) * size;
+    const end = Math.min(start + size, total);
+    const slice = start < end ? list.slice(start, end) : [];
+
+    const prev = page > 1 ? `/teams?page=${page - 1}&amp;size=${size}` : null;
+    const next = end < total ? `/teams?page=${page + 1}&amp;size=${size}` : null;
+
+    const html = `&lt;!doctype html&gt;
+  &lt;html lang="en"&gt;
+  &lt;head&gt;
+    &lt;meta charset="utf-8"&gt;
+    &lt;title&gt;Teams — Collty&lt;/title&gt;
+    &lt;meta name="robots" content="index,follow"&gt;
+    &lt;link rel="canonical" href="https://collty.com/teams"&gt;
+    &lt;meta name="viewport" content="width=device-width,initial-scale=1"&gt;
+    &lt;style&gt;
+      body{margin:0;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;background:#0f1115;color:#e6e8ec}
+      .wrap{max-width:980px;margin:24px auto;padding:0 16px}
+      a{color:#9ecbff;text-decoration:none}
+      ul{list-style:none;padding:0;margin:16px 0}
+      li{padding:10px 12px;border-bottom:1px solid #273042}
+      .muted{color:#9aa4b2}
+      nav{display:flex;gap:10px;margin:14px 0}
+      .btn{padding:8px 12px;border:1px solid #2a3240;border-radius:8px;background:#1b2232;color:#e6e8ec}
+      .btn[disabled]{opacity:.5}
+    &lt;/style&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;div class="wrap"&gt;
+      &lt;h1&gt;All Teams&lt;/h1&gt;
+      &lt;div class="muted"&gt;Total: ${total}. Page ${page} of ${Math.max(1, Math.ceil(total / size))}.&lt;/div&gt;
+      &lt;ul&gt;
+        ${slice.map(it =&gt; `&lt;li&gt;&lt;a href="/team/${it.slug}"&gt;${escapeHtml(it.name)}&lt;/a&gt;&lt;/li&gt;`).join('')}
+      &lt;/ul&gt;
+      &lt;nav&gt;
+        ${prev ? `&lt;a class="btn" href="${prev}"&gt;← Prev&lt;/a&gt;` : `&lt;button class="btn" disabled&gt;← Prev&lt;/button&gt;`}
+        ${next ? `&lt;a class="btn" href="${next}"&gt;Next →&lt;/a&gt;` : `&lt;button class="btn" disabled&gt;Next →&lt;/button&gt;`}
+      &lt;/nav&gt;
+      &lt;div class="muted"&gt;&lt;a href="/"&gt;← Back to Collty&lt;/a&gt;&lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/body&gt;
+  &lt;/html&gt;`;
+
+    res.set('Cache-Control', 'public, max-age=300, must-revalidate');
+    res.type('html').status(200).send(html);
+  } catch (e) {
+    console.error('/teams error:', e);
+    res.status(500).send('Server error');
   }
 });
 
