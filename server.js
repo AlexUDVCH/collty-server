@@ -2423,7 +2423,7 @@ app.get('/teams', async (req, res) => {
   <head>
     <meta charset="utf-8">
     <title>Teams — Collty</title>
-    <meta name="robots" content="index,follow">
+    <meta name="robots" content="noindex,follow">
     <link rel="canonical" href="https://collty.com/teams">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <style>
