@@ -84,8 +84,8 @@ function buildSitemapXml(urls) {
 
 app.get('/sitemap.xml', async (req, res) => {
   try {
-    // TODO: replace/extend with your dynamic list if needed
-    const urls = [
+    // Static base URLs
+    const staticUrls = [
       'https://collty.com',
       'https://collty.com/about',
       'https://collty.com/partnership',
@@ -95,8 +95,36 @@ app.get('/sitemap.xml', async (req, res) => {
       'https://collty.com/tpost/fl45g5r4a1-collty-starts-testing-phase-for-services',
     ];
 
+    // Fetch dynamic team URLs from Google Sheets
+    const auth = new google.auth.GoogleAuth({ keyFile: path, scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+    const rows = await fetchSheetWithRetry(sheets, `${sheetOrders}!A1:ZZ1000`);
+    let teamUrls = [];
+    if (rows && rows.length > 1) {
+      const headers = rows[0].map(h => h.trim());
+      const teamNameIdx = headers.findIndex(h => h.toLowerCase() === 'teamname');
+      if (teamNameIdx >= 0) {
+        // Use a Set to dedupe team slugs (case-insensitive)
+        const seenSlugs = new Set();
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          const teamName = (row[teamNameIdx] || '').trim();
+          if (!teamName) continue;
+          // slug: lowercased, spaces and underscores to hyphens, remove non-url-safe chars
+          let slug = teamName.toLowerCase()
+            .replace(/[_\s]+/g, '-')            // spaces/underscores to hyphens
+            .replace(/[^a-z0-9\-]/g, '')        // remove non-url
+            .replace(/\-+/g, '-')               // collapse multiple hyphens
+            .replace(/^-+|-+$/g, '');           // trim hyphens
+          if (!slug || seenSlugs.has(slug)) continue;
+          seenSlugs.add(slug);
+          teamUrls.push(`https://collty.com/team/${slug}`);
+        }
+      }
+    }
+    const urls = staticUrls.concat(teamUrls);
     res.set('Content-Type', 'application/xml');
-    // optional: caching for bots; keep short while debugging
     res.set('Cache-Control', 'public, max-age=3600');
     res.send(buildSitemapXml(urls));
   } catch (e) {
