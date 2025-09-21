@@ -2300,6 +2300,11 @@ function slugifyTeamName(input=''){
     .toLowerCase();
 }
 
+// --- Loose slug (ignore punctuation/hyphens): useful for tolerant matching of user-typed URLs ---
+function looseSlug(s){
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
 // --- Slug helpers: base slug + deterministic unique slug map ---
 function baseSlugForTeam(team) {
   const explicit = (team && team.slug) ? String(team.slug).trim() : '';
@@ -2314,6 +2319,7 @@ function buildSlugMaps(teams = []) {
   const seen = new Set();
   const teamBySlug = new Map();
   const slugByStableId = new Map();
+  const looseToCanonical = new Map();
 
   for (const t of sorted) {
     const base = baseSlugForTeam(t);
@@ -2335,11 +2341,14 @@ function buildSlugMaps(teams = []) {
         slug = `${base}-${suf}-${i}`;
       }
     }
+    // map loose version to canonical to allow tolerant lookups (e.g., "csrdgri" -> "csrd-gri")
+    const loose = looseSlug(slug);
+    if (!looseToCanonical.has(loose)) looseToCanonical.set(loose, slug);
     seen.add(slug);
     teamBySlug.set(slug.toLowerCase(), t);
     slugByStableId.set(stableIdForOrder(t), slug);
   }
-  return { teamBySlug, slugByStableId };
+  return { teamBySlug, slugByStableId, looseToCanonical };
 }
 
 async function _loadTeamsObjects() {
@@ -2364,18 +2373,32 @@ async function _findTeamBySlug(slug) {
 app.get('/team/:slug', async (req, res) => {
   try {
     const teams = await _loadTeamsObjects();
-    const { teamBySlug, slugByStableId } = buildSlugMaps(teams);
+    const { teamBySlug, slugByStableId, looseToCanonical } = buildSlugMaps(teams);
 
     const raw = String(req.params.slug || '').toLowerCase();
     let team = teamBySlug.get(raw);
 
-    // Back-compat: if user entered base slug without suffix but unique exists,
-    // try to match by base and pick the first with that base
+    // Back-compat and tolerant matching:
+    // 1) try loose (punctuation-agnostic) match, e.g. "csrdgri-..." -> "csrd-gri-..."
+    if (!team) {
+      const loose = looseSlug(raw);
+      const cand = looseToCanonical.get(loose);
+      if (cand) {
+        team = teamBySlug.get(cand);
+      }
+    }
+    // 2) fallback: exact base or prefix match (existing behavior)
     if (!team) {
       const base = raw;
-      // find any slug that equals base or starts with base + '-'
       for (const [slug, t] of teamBySlug.entries()) {
         if (slug === base || slug.startsWith(base + '-')) { team = t; break; }
+      }
+    }
+    // 3) last resort: compare by loose-prefix to tolerate minor separator differences
+    if (!team) {
+      const loose = looseSlug(raw);
+      for (const [slug, t] of teamBySlug.entries()) {
+        if (looseSlug(slug).startsWith(loose)) { team = t; break; }
       }
     }
 
@@ -2397,14 +2420,30 @@ app.get('/team/:slug', async (req, res) => {
 app.get('/api/team/:slug', async (req, res) => {
   try {
     const teams = await _loadTeamsObjects();
-    const { teamBySlug, slugByStableId } = buildSlugMaps(teams);
+    const { teamBySlug, slugByStableId, looseToCanonical } = buildSlugMaps(teams);
 
     const raw = String(req.params.slug || '').toLowerCase();
     let team = teamBySlug.get(raw);
+    // Tolerant loose matching first
+    if (!team) {
+      const loose = looseSlug(raw);
+      const cand = looseToCanonical.get(loose);
+      if (cand) {
+        team = teamBySlug.get(cand);
+      }
+    }
+    // Existing base/prefix fallback
     if (!team) {
       const base = raw;
       for (const [slug, t] of teamBySlug.entries()) {
         if (slug === base || slug.startsWith(base + '-')) { team = t; break; }
+      }
+    }
+    // Loose-prefix final fallback
+    if (!team) {
+      const loose = looseSlug(raw);
+      for (const [slug, t] of teamBySlug.entries()) {
+        if (looseSlug(slug).startsWith(loose)) { team = t; break; }
       }
     }
     if (!team) return res.status(404).json({ error: 'Not found' });
