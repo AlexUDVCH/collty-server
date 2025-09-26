@@ -2710,9 +2710,10 @@ app.get('/sitemap.xml', async (req, res) => {
 xmlItems +
 `\n</urlset>`;
 
+    res.set('X-Sitemap-Rev', 'v2025-09-26b');
     res.set('Cache-Control', 'public, max-age=300, must-revalidate');
     res.set('Vary', 'Accept-Encoding');
-    res.type('application/xml').send(body);
+    res.type('application/xml; charset=utf-8').send(body);
   } catch (e) {
     console.error('sitemap.xml error:', e);
     res.status(500).send('Failed to build sitemap');
@@ -2721,7 +2722,9 @@ xmlItems +
 
 // --- robots.txt ---
 app.get('/robots.txt', (req, res) => {
-  res.type('text/plain').send(
+  res.type('text/plain');
+  res.set('X-Robots-Rev', 'v2025-09-26');
+  res.send(
 `User-agent: *
 Allow: /
 
