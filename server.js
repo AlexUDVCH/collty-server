@@ -2643,49 +2643,72 @@ async function _autoDiscoverTildaPosts() {
   return urls;
 }
 
-// Sitemap enumerating all site pages (static pages + all team pages)
+// Sitemap enumerating all site pages (static pages + blog + team pages)
 app.get('/sitemap.xml', async (req, res) => {
   try {
-    // 1) Static pages you want indexed (edit this list as needed)
+    // Helper to format YYYY-MM-DD
+    const today = new Date().toISOString().slice(0, 10);
+
+    // 1) Static pages with explicit metadata
     const STATIC_PAGES = [
-      'https://collty.com/',
-      'https://collty.com/about',
-      'https://collty.com/partnership',
+      { loc: 'https://collty.com/',              changefreq: 'daily',   priority: '1.0', lastmod: today },
+      { loc: 'https://collty.com/about',         changefreq: 'monthly', priority: '0.9', lastmod: today },
+      { loc: 'https://collty.com/partnership',   changefreq: 'monthly', priority: '0.9', lastmod: today },
+      { loc: 'https://collty.com/insights',      changefreq: 'daily',   priority: '0.9', lastmod: today },
     ];
 
-    // 2) Auto-discovered Tilda blog posts (/tpost/...)
+    // 2) Auto-discovered Tilda blog posts (/tpost/...) — lighter priority
     const blogAuto = await _autoDiscoverTildaPosts();
+    const BLOG_PAGES = (blogAuto || []).map(u => ({
+      loc: String(u).replace(/\s+/g, '').replace(/&amp;/g, '&').replace(/\/$/, ''),
+      changefreq: 'weekly',
+      priority: '0.6'
+    }));
 
     // 3) Dynamic team pages from Google Sheets
     const teams = await _loadTeamsObjects();
     const { slugByStableId } = buildSlugMaps(teams);
-    const teamUrls = teams.map(t =>
-      `https://collty.com/team/${slugByStableId.get(stableIdForOrder(t)) || baseSlugForTeam(t)}`
-    );
+    const TEAM_PAGES = teams.map(t => ({
+      loc: `https://collty.com/team/${slugByStableId.get(stableIdForOrder(t)) || baseSlugForTeam(t)}`,
+      changefreq: 'weekly',
+      priority: '0.5'
+    }));
 
-    // 4) Merge + de-duplicate while preserving order (static → blog(auto) → teams)
+    // 4) Merge + de-duplicate while preserving order (static → blog → teams)
     const seen = new Set();
     const urls = [];
-    function pushUnique(list) {
-      for (let u of list) {
-        if (!u) continue;
-        // Remove any whitespace (including newlines) accidentally included in source lists
-        let s = String(u).replace(/\s+/g, '');
-        // Unescape common HTML entity just in case feeds provide &amp;
-        s = s.replace(/&amp;/g, '&').trim();
-        const norm = s.replace(/\/$/, '');
-        if (!seen.has(norm)) { seen.add(norm); urls.push(norm); }
+    function pushUnique(list){
+      for (const it of list){
+        if (!it || !it.loc) continue;
+        const norm = String(it.loc).trim().replace(/\/$/, '');
+        if (seen.has(norm)) continue;
+        seen.add(norm);
+        urls.push({
+          loc: norm,
+          changefreq: it.changefreq,
+          priority: it.priority,
+          lastmod: it.lastmod
+        });
       }
     }
     pushUnique(STATIC_PAGES);
-    pushUnique(blogAuto);
-    pushUnique(teamUrls);
+    pushUnique(BLOG_PAGES);
+    pushUnique(TEAM_PAGES);
+
+    const xmlItems = urls.map(u => [
+      '  <url>',
+      `    <loc>${u.loc}</loc>`,
+      u.lastmod    ? `    <lastmod>${u.lastmod}</lastmod>`       : null,
+      u.changefreq ? `    <changefreq>${u.changefreq}</changefreq>` : null,
+      u.priority   ? `    <priority>${u.priority}</priority>`       : null,
+      '  </url>'
+    ].filter(Boolean).join('\n')).join('\n');
 
     const body =
-`<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls.map(u => `<url><loc>${u}</loc></url>`).join('\n')}
-</urlset>`;
+`<?xml version="1.0" encoding="UTF-8"?>\n` +
+`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+xmlItems +
+`\n</urlset>`;
 
     res.set('Cache-Control', 'public, max-age=300, must-revalidate');
     res.set('Vary', 'Accept-Encoding');
