@@ -2659,20 +2659,28 @@ xmlItems +
 });
 
 // --- robots.txt ---
+const ROBOTS_LAST_MOD = new Date(process.env.ROBOTS_LAST_MOD || '2025-09-27T00:00:00Z').toUTCString();
+
 app.get('/robots.txt', (req, res) => {
-  res.type('text/plain');
-  res.set('X-Robots-Rev', 'v2025-09-26');
-  res.send(
+  res.type('text/plain; charset=utf-8');
+
+  // Перезаписываем кэш-заголовки на корректные (если где-то выше стоял no-store)
+  res.set({
+    'Cache-Control': 'public, max-age=7200, s-maxage=7200, immutable',
+    'Last-Modified': ROBOTS_LAST_MOD,
+    'X-Robots-Rev': process.env.X_ROBOTS_REV || 'v2025-09-27'
+  });
+  // На всякий случай очищаем возможные no-cache/Expires
+  res.removeHeader('Pragma');
+  res.removeHeader('Expires');
+
+  res.status(200).send(
 `User-agent: *
 Allow: /
 
-Sitemap: https://collty.com/sitemap.xml`
+Sitemap: https://collty.com/sitemap.xml
+`   // ← важна завершающая пустая строка (перевод строки в конце файла)
   );
-});
-
-app.use((req, res) => {
-  console.warn('[404]', req.method, req.originalUrl);
-  res.status(404).send('Not Found');
 });
 
 app.listen(port, () => {
